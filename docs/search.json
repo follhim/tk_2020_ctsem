@@ -88,5 +88,55 @@
     "crumbs": [
       "<span class='chapter-number'>1</span>  <span class='chapter-title'>Data Preparation</span>"
     ]
+  },
+  {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "kwapil_2020",
+    "section": "",
+    "text": "Home\nThis website documents the data preparation and analysis for XXXX.",
+    "crumbs": [
+      "Home"
+    ]
+  },
+  {
+    "objectID": "index.html#how-to-navigate-this-website",
+    "href": "index.html#how-to-navigate-this-website",
+    "title": "kwapil_2020",
+    "section": "How to navigate this website?",
+    "text": "How to navigate this website?\n\nTo see the raw code files see here.\nTo view rendered code, simply navigate a chapter on the left panel of this website.",
+    "crumbs": [
+      "Home"
+    ]
+  },
+  {
+    "objectID": "index.html#how-does-this-website-work",
+    "href": "index.html#how-does-this-website-work",
+    "title": "kwapil_2020",
+    "section": "How does this website work?",
+    "text": "How does this website work?\n\nThis data cleaning and analysis is performed locally on a laptop.\nEach phase is separated by its own R script file (.qmd file)\nThus, each R script chapter reflects the actual underlying code used to clean and analyze data.\n\n\nThis means that you can also directly suggest edits or corrections online (see section below) which will be reflected in the data cleaning workflow.\n\n\nEverytime the R code is changed or updated, GitHub will track and contain a comment (user must provide) that denotes what changes were made.",
+    "crumbs": [
+      "Home"
+    ]
+  },
+  {
+    "objectID": "index.html#spot-any-errors",
+    "href": "index.html#spot-any-errors",
+    "title": "kwapil_2020",
+    "section": "Spot any errors?",
+    "text": "Spot any errors?\nOpen an issue in the corresponding chapter you are in. You can find the “Report an issue” GitHub button on the top right of every page. From there, you can detail what the problem is, and someone will work to resolve the issue.",
+    "crumbs": [
+      "Home"
+    ]
+  },
+  {
+    "objectID": "index.html#progress",
+    "href": "index.html#progress",
+    "title": "kwapil_2020",
+    "section": "Progress?",
+    "text": "Progress?\nYou can track current unresolved and resolved issues here.",
+    "crumbs": [
+      "Home"
+    ]
   }
 ]
