@@ -1,0 +1,299 @@
+---
+title: "Data Preparation"
+format:
+  html:
+    toc: true
+    toc-depth: 6
+code-line-numbers: true
+code-annotations: true
+editor_options: 
+  chunk_output_type: console
+execute:
+  warning: FALSE
+---
+
+## Initial Set Up
+### Load Packages
+```{r}
+pacman::p_load(tidyverse, haven)
+```
+
+### Import Raw p1_datast
+```{r}
+p1_data <- read_sav("data/tk_2020.sav")
+names(p1_data) <- tolower(names(p1_data))
+```
+
+## Create Variables
+### Recode PSX
+```{r}
+p1_data <- p1_data %>%
+  mutate(
+    across(c(esm12, esm19:esm22), ~ .x - 1, .names = "{.col}_r") #<1>
+  ) %>%
+  mutate(
+    esm_psx_sum = rowSums(across(c(esm12_r, esm19_r, esm20_r, esm21_r, esm22_r)), na.rm = FALSE) #<2>
+  )
+```
+
+:::callout-note
+I'm creating my own version of the Psychotic-like Experiences composite variable. The existing variables/indices seek to address the big floor effect. We actually have a decent way of addressing this according to Muthen et al.
+
+In Line-3,I am recoding so that "NO" = 0, instead of 1. 
+
+In Line-6, I am getting the sum, but if a single variable is missing, we will treat their overall score as missing. 
+:::
+
+### Create Time Variable
+```{r}
+p1_data <- p1_data %>%
+  mutate(
+    datetime = as_datetime(date) + time 
+  ) %>%
+  group_by(id) %>%
+  arrange(datetime, .by_group = TRUE) %>%
+  mutate(
+    time_hour = as.numeric(difftime(datetime, first(datetime), units = "hours"))
+  ) %>%
+  mutate(
+    time_day = as.numeric(difftime(datetime, first(datetime), units = "days"))
+  ) %>%
+  ungroup()
+```
+
+## Descriptives
+### What is N?
+```{r}
+n_distinct(p1_data$id)
+```
+
+### All Variables
+```{r}
+tidySEM::descriptives(p1_data) %>%
+  select(name, n, missing, unique, mean, sd, min, max, range, skew, kurt) %>%
+  mutate(across(where(is.numeric), ~round(.x, 2))) %>%
+  DT::datatable()
+```
+
+### Codebook
+
+code_data <- p1_data %>%
+  mutate(across(esm01:esm30, as.factor))
+  
+```{r}
+code_data <- p1_data %>%
+  mutate(across(esm01:esm30, as.factor))
+memisc::Write(memisc::codebook(code_data),
+              file = "01_files/p1_data_codebook.txt")
+```
+
+
+## Visualize 
+
+:::callout-note
+Overall, there is a non-negligible floor effects in some variables. I will attempt to address some, but others we will have to see how the model handles skewed variables.
+:::
+
+### Level 2 Variables
+```{r}
+library(patchwork)
+p1_data %>%
+  ggplot(aes(zpos)) +
+  geom_bar() +
+  labs(x = "POS") +
+  
+p1_data %>%
+  ggplot(aes(zneg)) +
+  geom_bar() +
+  labs(x = "NEG") +
+
+p1_data %>%
+  ggplot(aes(zdis)) +
+  geom_histogram(binwidth = 0.1) +
+  labs(x = "DIS")
+```
+
+### Composite Indices
+:::callout-important
+`Positive Affect` demonstrates pretty good distribution qualities. Can't say the same for any other composite variable. 
+:::
+
+```{r}
+p1_data %>%
+  ggplot(aes(esm_pa)) +
+  geom_bar() +
+  
+p1_data %>%
+  ggplot(aes(esm_na)) +
+  geom_bar() +
+
+p1_data %>%
+  ggplot(aes(esm_neg3)) +
+  geom_bar() +
+
+p1_data %>%
+  ggplot(aes(esm_dis)) +
+  geom_bar() +
+
+p1_data %>%
+  ggplot(aes(esm_psx_sum)) +
+  geom_bar()
+```
+
+
+### Items
+```{r}
+bar_pct <- function(data, var) {
+  ggplot(data, aes({{ var }})) +
+    geom_bar(aes(y = after_stat(count / sum(count) * 100))) +
+    geom_text(aes(y = after_stat(count / sum(count) * 100),
+                  label = after_stat(paste0(round(count / sum(count) * 100, 1), "%"))),
+              stat = "count", vjust = -0.3) +
+    labs(y = "Percent") +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.15)))
+}
+```
+
+:::callout-warning
+This is a custom convenience function that makes visualization easier with less code. Created using Claude.ai.
+:::
+
+#### Positive Aff
+```{r}
+(bar_pct(p1_data, esm01) +
+bar_pct(p1_data, esm05) +
+bar_pct(p1_data, esm09)) +
+  plot_layout(ncol = 2)
+```
+
+#### Negative Aff
+```{r}
+(bar_pct(p1_data, esm02) +
+bar_pct(p1_data, esm03) +
+bar_pct(p1_data, esm06)) +
+  plot_layout(ncol = 2)
+```
+
+#### Negative Experiences
+```{r}
+(bar_pct(p1_data, esm11) +
+bar_pct(p1_data, esm13) +
+bar_pct(p1_data, esm15)) +
+  plot_layout(ncol = 2)
+```
+
+#### Psychotic-like Exp.
+```{r}
+(bar_pct(p1_data, esm12_r) +
+bar_pct(p1_data, esm19_r) +
+bar_pct(p1_data, esm20_r) +
+bar_pct(p1_data, esm21_r) +
+bar_pct(p1_data, esm22_r)) +
+  plot_layout(ncol = 2)
+```
+
+#### Disorganized Experiences
+```{r}
+(bar_pct(p1_data, esm04) +
+bar_pct(p1_data, esm07) +
+bar_pct(p1_data, esm10)) +
+  plot_layout(ncol = 2)
+```
+
+
+## Separating Floor Effect
+:::callout-important
+Luckily, Muthen et al. actually came out with a pretty clever and theoretically meaningful way to address floor effects. 
+
+Instead of dropping the floor effect (the lowest value possible), Muthen et al. recommends creating two variables from the original variable. They call this the **two-part** approach for dealing with floor effects.
+
+**Step 1**: Create a binary variable.  
+Create a binary variable that collapses all **non-floor** scores as `1`. Thus, *conceptually* this variable represents whether a construct is meaingfully *occuring* or not.
+
+BIN = 0, the construct is not meaningfully occuring.
+BIN = 1, the construct is meaningfully occuring. 
+
+We *do* loose information about the magnitude of how this construct is taking place, but that's where part 2 comes in.
+
+**Step 2**: Create a continuous variable.  
+In the second step, we code all floor effects as `NA` (i.e., missing) and retain non-floor effects as original.
+
+Thus, the continous variable is represents what is taking place **AFTER** removed floor effects which drowned out the variance. 
+
+Thus, in analytical models we should include **both** variables (only possible in SEMs) and allowed to correlate with one another. In doing so, we can understand if a distal variable is related to the **occurrence** of a construct *AND* also when it is occurring, the **magnitude** of that relationship.
+:::
+
+### Neg-Aff
+```{r}
+#| fig-width: 12
+#| fig-height: 5
+p1_data <- p1_data %>%
+  mutate(
+    esm_na_bin = ifelse(esm_na == 1, 0, 1),
+    esm_na_con = ifelse(esm_na == 1, NA, esm_na)
+  )
+
+bar_pct(p1_data, esm_na)
+
+bar_pct(p1_data, esm_na_bin) +
+bar_pct(p1_data, esm_na_con) +
+  patchwork::plot_layout(widths = c(1, 2))
+```
+
+
+### Negative Exp.
+```{r}
+#| fig-width: 12
+#| fig-height: 5
+p1_data <- p1_data %>%
+  mutate(
+    esm_neg3_bin = ifelse(esm_neg3 == 1, 0, 1),
+    esm_neg3_con = ifelse(esm_neg3 == 1, NA, esm_neg3)
+  )
+
+bar_pct(p1_data, esm_neg3)
+
+bar_pct(p1_data, esm_neg3_bin) +
+bar_pct(p1_data, esm_neg3_con) +
+  patchwork::plot_layout(widths = c(1, 2))
+```
+
+### Disorganized Experiences
+```{r}
+#| fig-width: 12
+#| fig-height: 5
+p1_data <- p1_data %>%
+  mutate(
+    esm_dis_bin = ifelse(esm_dis == 1, 0, 1),
+    esm_dis_con = ifelse(esm_dis == 1, NA, esm_dis)
+  )
+
+bar_pct(p1_data, esm_dis)
+
+bar_pct(p1_data, esm_dis_bin) +
+bar_pct(p1_data, esm_dis_con) +
+  patchwork::plot_layout(widths = c(1, 2))
+```
+
+### Psychotic-like Exp.
+```{r}
+#| fig-width: 12
+#| fig-height: 5
+p1_data <- p1_data %>%
+  mutate(
+    esm_psx_bin = ifelse(esm_psx_sum == 0, 0, 1),
+    esm_psx_con = ifelse(esm_psx_sum == 0, NA, esm_psx_sum)
+  )
+
+bar_pct(p1_data, esm_psx_sum)
+
+bar_pct(p1_data, esm_psx_bin) +
+bar_pct(p1_data, esm_psx_con) +
+  patchwork::plot_layout(widths = c(1, 2))
+```
+
+```{r}
+#| include: false
+
+saveRDS(p1_data, "data/p1_data.Rds")
+```

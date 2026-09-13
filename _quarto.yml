@@ -1,0 +1,22 @@
+project:
+  type: book
+
+book:
+  title: "kwapil_2020"
+  author: "Seungju Kim"
+  date: last-modified
+  chapters:
+    - index.qmd
+    - 01_data_prep.qmd
+    - 02_observed_ctsem.qmd
+
+format:
+  html:
+    theme:
+      - cosmo
+      - brand
+  pdf:
+    documentclass: scrreprt
+
+
+

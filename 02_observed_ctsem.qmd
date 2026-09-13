@@ -1,0 +1,247 @@
+---
+title: "Positive Affect"
+format:
+  html:
+    toc: true
+    toc-depth: 6
+code-line-numbers: true
+code-annotations: true
+editor_options: 
+  chunk_output_type: console
+execute:
+  warning: FALSE
+---
+
+## Initial Set Up
+### Load Packages/Cust Functions
+```{r}
+pacman::p_load(tidyverse, ctsem)
+source("cust_funcs/lavaan_parser.R")
+source("cust_funcs/ct_plot.R")
+```
+
+```{r}
+#| include: false
+p2_data <- readRDS("data/p1_data.Rds")
+p2_data <- p2_data %>% filter(!is.na(time_day))
+
+p2_data %>% 
+  group_by(id) %>% 
+  filter(any(duplicated(time_day)) | any(diff(time_day) <= 0)) %>% 
+  distinct(id)
+```
+
+## Observed Model
+### Standardize Variables
+```{r}
+p2_data <- p2_data %>%
+  mutate(across(c(esm_pa, zpos, zneg, zdis), scale))
+
+p2_data %>%
+  select(esm_pa, zpos, zneg, zdis) %>%
+  psych::describe()
+```
+
+### Model Specification
+```{r}
+pos_ctsem <- "
+# Measurement Model
+posaff_B =~ esm_pa
+posaff_W =~ esm_pa
+
+# Between/Trend
+posaff_B  ~  posaff_B     
+posaff_B ~~  0*posaff_B # this is what tells model its between-person
+posaff_B %~% posaff_B     
+
+# Within (dynamic) factor
+posaff_W  ~  posaff_W       
+posaff_W ~~  posaff_W       
+posaff_W %~% posaff_W       
+
+# CINT
+posaff_B ~ 1
+"
+
+pos_ctsem_syn <- ct_lavaan(pos_ctsem) 
+```
+
+### Fit Model
+```{r}
+#| eval: false
+pos_ctsem_mod <- ctModel(
+  type          = "ct",
+  id = "id",
+  time = "time_day",
+  latentNames   = pos_ctsem_syn$latentNames,
+  manifestNames = pos_ctsem_syn$manifestNames,
+  LAMBDA        = pos_ctsem_syn$LAMBDA,
+  DRIFT         = pos_ctsem_syn$DRIFT,
+  DIFFUSION     = pos_ctsem_syn$DIFFUSION,
+  T0VAR         = pos_ctsem_syn$T0VAR,
+  CINT          = pos_ctsem_syn$CINT,
+  T0MEANS       = pos_ctsem_syn$T0MEANS,
+  MANIFESTMEANS = pos_ctsem_syn$MANIFESTMEANS,
+  manifesttype  = pos_ctsem_syn$manifesttype,
+  n.TIpred      = 3,
+  TIpredNames   = c("zpos", "zneg", "zdis")
+)
+
+pos_ctsem_mod$pars[, c("zpos", "zneg", "zdis")] <- FALSE
+
+target <- pos_ctsem_mod$pars$matrix == "DRIFT" &
+          pos_ctsem_mod$pars$row    == "posaff_W" &
+          pos_ctsem_mod$pars$col    == "posaff_W"
+
+pos_ctsem_mod$pars[target, c("zpos", "zneg", "zdis")] <- TRUE
+
+pos_ctsem_fit <- ctStanFit(
+  datalong = p2_data, 
+  ctstanmodel = pos_ctsem_mod,
+  cores = 10, plot = FALSE, priors = TRUE
+)
+saveRDS(pos_ctsem_fit, "02_files/pos_ctsem_fit.Rds")
+```
+
+### Evaluate Model Fit
+```{r}
+pos_ctsem_fit <- readRDS("02_files/pos_ctsem_fit.Rds")
+```
+
+#### Residual Auto-Correlation
+```{r}
+acf_pos_ctsem_fit <- readRDS("02_files/acf_pos_ctsem_fit.rds")
+item_manifests <- pos_ctsem_syn$manifestNames
+acf_pos_ctsem <- acf_pos_ctsem_fit$data
+
+diag_dt_fit <- unique(
+  acf_pos_ctsem[Variable %in% item_manifests,
+                       .(TimeInterval, Variable, Q50 = `Q50%`, lo = `Q2.5%`, hi = `Q97.5%`, SignificanceLevel)]
+)
+
+ggplot(diag_dt_fit, aes(x = TimeInterval, y = Q50)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = .2) +
+  geom_line() +
+  geom_hline(aes(yintercept = SignificanceLevel), linetype = "dotted") +
+  geom_hline(aes(yintercept = -SignificanceLevel), linetype = "dotted") +
+  geom_hline(yintercept = 0, color = "grey50", linewidth = .3) +
+  facet_wrap(~ Variable, ncol = 6, scales = "free_y") +
+  labs(title = "Residual autocorrelation (item-level latent floor-effect model, diagonal)", y = "ACF", x = "Time interval (days)") +
+  theme_minimal()
+```
+
+#### Posterior Predictive Check
+```{r}
+#| eval: false
+pp_plot_pos_ctsem_fit <- ctPostPredPlots(pos_ctsem_fit)
+saveRDS(pp_plot_pos_ctsem_fit, "02_files/pp_plot_pos_ctsem_fit.rds")
+```
+
+```{r}
+pp_plot_pos_ctsem_fit <- readRDS("02_files/pp_plot_pos_ctsem_fit.rds")
+
+for (panel_name in names(pp_plot_pos_ctsem_fit)) {
+  cat("\n---", panel_name, "---\n")
+  tryCatch(
+    print(pp_plot_pos_ctsem_fit[[panel_name]]),
+    error = function(e) {
+      cat("  [", panel_name, "panel failed to render:", conditionMessage(e), "]\n")
+    }
+  )
+}
+```
+
+:::callout-note
+Overall, the model's expected values and observed values suggest great fit.
+:::
+
+### Results
+
+#### Auto-Effect Visual
+```{r}
+set.seed(1111)
+ct_effects_plot(
+  pos_ctsem_fit,
+  effects = c(
+    "posaff_W>posaff_W"),
+  times = seq(0, 2, 0.01),
+  ylim = c(0, 1),
+  title = "Auto-effects: Positive Affect",
+  legend_labels = c(
+    "Positive Affect -> Positive Affect"),
+  latentNames = pos_ctsem_syn$latentNames   # <- add this
+)
+```
+
+#### Main Effects
+```{r}
+pos_ctsem_fit <- readRDS("02_files/pos_ctsem_fit.Rds")
+pos_ctsem_res <- summary(pos_ctsem_fit)
+pos_ctsem_res$parmatrices %>%
+  filter(matrix == "DRIFT") %>%
+  filter(row == col)
+```
+
+:::callout-note
+The first parameter represents the overall between-person detrend of Positive Affect (-0.03, [-.12, -0.006]). This means that the detrend is fairly weak, and Positive Affect as a "trait" is fairly stable.
+
+The second parameter represents the within-person dynamic return of PA to equilibrium (-4.29 [-5.43, -3.33]). What does this mean practically? This tells us how fast a process returns to equilibrium.
+
+We can actually calculate the half-life using the following:
+:::
+
+```{r}
+days <- log(0.5)/-4.29
+days
+
+days*24
+```
+
+:::callout-note
+Interpretation: For a given deivation from a person's stable, trait-level positive affect, half of that deviation would dissipate within approximately 3.9 hours--assuming no other force intervened.
+:::
+
+```{r}
+pos_ctsem_res$parmatrices %>%
+  filter(matrix == "dtDRIFT") %>%
+  filter(row == col)
+```
+
+:::callout-note
+When dtDRIFT == 1 (1 day/24 hours), only ~1.6% of the original deviation on PA would remain.
+:::
+
+### Cross-level Interaction
+#### Auto-Effect
+```{r}
+pos_ctsem_res$tipreds %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("param") %>%
+  filter(grepl("auto_posaff_W", param))
+```
+
+:::callout-note
+Similar to the interpretation above, we find significant cross-level interactions. A bigger `negative` coefficient suggests the time invariant variable predicted **faster** decay.
+
+1.  Positive Affect (MSS) had the largest negative association (-2.29 [-3.24, -1.35]) with the auto-effect of PA. **In other words**, greater MSS-PA is associated with a faster decay in within-PA.
+2.  Likewise, greater MSS-Negative Affect was also associated with faster decay (-1.76 [-2.61, -0.95]). 
+3.  However, greater MSS-Disorganized Schitzophrenia was associated with **slower** decay in PA (0.82 [0.02, 1.59]).
+:::
+
+#### Diffusion/Volatility
+```{r}
+pos_ctsem_res$tipreds %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("param") %>%
+  filter(grepl("diff_posaff_W", param))
+```
+
+:::callout-note
+Diffiusion represents the `volatility` not accounted for by the either the between or wihtin-person AR effects. 
+
+1.  MSS-Positive Affect had the largest positive association (0.41 [0.26, 0.57]) the diffusion of within-PA.
+2.  Likewise, greater MSS-Negative Affect was also associated with the diffusion of within-PA (0.29 [0.16, 0.41]). 
+3.  However, greater MSS-Disorganized Schitzophrenia was associated with **lower** diffusion of within-PA (-0.12 [-0.29, 0.06]); although this was **not a credible** association.
+:::
+
+
