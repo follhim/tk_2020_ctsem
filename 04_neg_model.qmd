@@ -1,0 +1,243 @@
+---
+title: "Negative Affect"
+format:
+  html:
+    toc: true
+    toc-depth: 6
+code-line-numbers: true
+code-annotations: true
+editor_options:
+  chunk_output_type: console
+execute:
+  warning: FALSE
+---
+
+## Initial Set Up
+### Load Packages/Cust Functions
+```{r}
+pacman::p_load(tidyverse, ctsem)
+source("cust_funcs/lavaan_parser.R")
+source("cust_funcs/ct_plot.R")
+source("cust_funcs/plot_ppc.R")
+```
+
+```{r}
+#| include: false
+p4_data <- readRDS("data/p2_data.Rds")
+```
+
+### Standardize Variables
+```{r}
+p4_data <- p4_data %>%
+  mutate(across(c(esm_na, esm_na_con, zpos, zneg, zdis), scale))
+
+p4_data %>%
+  select(esm_na, esm_na_bin, esm_na_con, zpos, zneg, zdis) %>%
+  psych::describe()
+```
+
+### Julia Backend Setup
+```{r}
+ctJuliaSetup(threads = 10, force = TRUE)
+```
+
+## Two-Part Approach (Censored Magnitude)
+
+### Model Specification
+```{r}
+na_twopart_ctsem <- "
+# Measurement Model
+## BINARY
+bin_na_B =~ esm_na_bin
+bin_na_W =~ esm_na_bin
+
+## CONT.
+con_na_B =~ esm_na_con
+con_na_W =~ esm_na_con
+
+# Between/Trend
+bin_na_B  ~  bin_na_B
+bin_na_B ~~  0*bin_na_B
+bin_na_B %~% bin_na_B
+
+con_na_B  ~  con_na_B
+con_na_B ~~  0*con_na_B
+con_na_B %~% con_na_B
+
+bin_na_B %~% con_na_B
+
+# Within (dynamic) factor
+## BINARY
+bin_na_W  ~  bin_na_W
+bin_na_W ~~  bin_na_W
+bin_na_W %~% bin_na_W
+
+## CONT.
+con_na_W  ~  con_na_W
+con_na_W ~~  con_na_W
+con_na_W %~% con_na_W
+
+## T0MEAN
+bin_na_B ~t0~ 1
+con_na_B ~t0~ 1
+
+BINARY: esm_na_bin
+CENSOR: esm_na_con
+"
+
+na_twopart_syn <- ct_lavaan(na_twopart_ctsem, data = p4_data)
+
+na_twopart_mod <- ctModel(
+  type          = "ct",
+  id            = "id",
+  time          = "time_day",
+  latentNames   = na_twopart_syn$latentNames,
+  manifestNames = na_twopart_syn$manifestNames,
+  LAMBDA        = na_twopart_syn$LAMBDA,
+  DRIFT         = na_twopart_syn$DRIFT,
+  DIFFUSION     = na_twopart_syn$DIFFUSION,
+  T0VAR         = na_twopart_syn$T0VAR,
+  CINT          = na_twopart_syn$CINT,
+  T0MEANS       = na_twopart_syn$T0MEANS,
+  MANIFESTMEANS = na_twopart_syn$MANIFESTMEANS,
+  manifesttype  = na_twopart_syn$manifesttype,
+  censormin     = na_twopart_syn$censormin,
+  censormax     = na_twopart_syn$censormax,
+  n.TIpred      = 3,
+  TIpredNames   = c("zpos", "zneg", "zdis")
+)
+
+print(na_twopart_mod$pars[na_twopart_mod$pars$matrix == "DRIFT",
+                           c("matrix", "row", "col",
+                             "zpos_effect", "zneg_effect", "zdis_effect")])
+```
+
+### Fit Model
+```{r}
+#| eval: false
+na_twopart_fit <- ctFit(
+  datalong = p4_data,
+  model    = na_twopart_mod,
+  backend  = "julia",
+  optimcontrol = list(maxiter = 10000),
+  cores = 10, plot = FALSE, priors = TRUE
+)
+saveRDS(na_twopart_fit, "04_files/na_twopart_fit.Rds")
+```
+
+### Evaluate Model Fit
+```{r}
+na_twopart_fit <- readRDS("04_files/na_twopart_fit.Rds")
+summary(na_twopart_fit)
+```
+
+#### Residual Auto-Correlation
+```{r}
+#| eval: false
+acf_na_twopart_fit <- ctACFresiduals(
+  na_twopart_fit,
+  varnames = na_twopart_syn$manifestNames,
+  nboot = 10
+)
+saveRDS(acf_na_twopart_fit, "04_files/acf_na_twopart.rds")
+```
+
+```{r}
+acf_na_twopart_fit <- readRDS("04_files/acf_na_twopart.rds")
+item_manifests <- na_twopart_syn$manifestNames
+acf_na_twopart <- acf_na_twopart_fit$data
+
+diag_dt_fit <- unique(
+  acf_na_twopart[Variable %in% item_manifests,
+                 .(TimeInterval, Variable, Q50 = `Q50%`, lo = `Q2.5%`, hi = `Q97.5%`, SignificanceLevel)]
+)
+
+ggplot(diag_dt_fit, aes(x = TimeInterval, y = Q50)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = .2) +
+  geom_line() +
+  geom_hline(aes(yintercept = SignificanceLevel), linetype = "dotted") +
+  geom_hline(aes(yintercept = -SignificanceLevel), linetype = "dotted") +
+  geom_hline(yintercept = 0, color = "grey50", linewidth = .3) +
+  facet_wrap(~ Variable, ncol = 6, scales = "free_y") +
+  labs(title = "Residual autocorrelation (Two-Part, censored magnitude)", y = "ACF", x = "Time interval (days)") +
+  theme_minimal()
+```
+
+#### Posterior Predictive Check
+```{r}
+#| eval: false
+pp_plot_na_twopart_fit <- ctPostPredPlots(na_twopart_fit)
+saveRDS(pp_plot_na_twopart_fit, "04_files/pp_plot_na_twopart_fit.Rds")
+save_postpred_plots(pp_plot_na_twopart_fit, "04_files/postpred_na_twopart")
+```
+
+```{r}
+pp_plot_na_twopart_fit <- readRDS("04_files/pp_plot_na_twopart_fit.Rds")
+
+for (panel_name in names(pp_plot_na_twopart_fit)) {
+  cat("\n---", panel_name, "---\n")
+  tryCatch(
+    print(pp_plot_na_twopart_fit[[panel_name]]),
+    error = function(e) {
+      cat("  [", panel_name, "panel failed to render:", conditionMessage(e), "]\n")
+    }
+  )
+}
+```
+
+### Visual
+#### Binary
+```{r}
+set.seed(1111)
+ct_effects_plot(
+  na_twopart_fit,
+  effects = c("bin_na_W>bin_na_W"),
+  times = seq(0, 8, 0.01),
+  ylim = c(0, 1),
+  title = "Auto-effects: Two-Part (Censored Magnitude)",
+  legend_labels = c("NA (occurrence) -> NA (occurrence)"),
+  latentNames = na_twopart_syn$latentNames
+)
+```
+
+#### Magnitude
+```{r}
+set.seed(1111)
+ct_effects_plot(
+  na_twopart_fit,
+  effects = c("con_na_W>con_na_W"),
+  times = seq(0, 8, 0.01),
+  ylim = c(0, 1),
+  title = "Auto-effects: Two-Part (Censored Magnitude)",
+  legend_labels = c("NA (magnitude) -> NA (magnitude)"),
+  latentNames = na_twopart_syn$latentNames
+)
+```
+
+### Cross-level Interaction (+/- 1 SD)
+```{r}
+tip_names <- c("zpos", "zneg", "zdis")
+
+for (nm in tip_names) {
+  tipred_plots <- ctPredictTIP(
+    na_twopart_fit,
+    tipreds    = nm,
+    doDynamics = TRUE,
+    plot       = TRUE
+  )
+
+  print(
+    tipred_plots$Process$Latent[[nm]] +
+      ggplot2::labs(title = paste0("Latent trajectories by ", nm, " (-1 SD / median / +1 SD)"))
+  )
+  print(
+    tipred_plots$Dynamics$Independent[[nm]] +
+      ggplot2::labs(title = paste0("Dynamics (impulse response) by ", nm, " (-1 SD / median / +1 SD)"))
+  )
+}
+```
+
+```{r}
+#| include: false
+saveRDS(p4_data, "data/p4_data.Rds")
+```

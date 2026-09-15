@@ -1,0 +1,243 @@
+---
+title: "Negative Experiences"
+format:
+  html:
+    toc: true
+    toc-depth: 6
+code-line-numbers: true
+code-annotations: true
+editor_options:
+  chunk_output_type: console
+execute:
+  warning: FALSE
+---
+
+## Initial Set Up
+### Load Packages/Cust Functions
+```{r}
+pacman::p_load(tidyverse, ctsem)
+source("cust_funcs/lavaan_parser.R")
+source("cust_funcs/ct_plot.R")
+source("cust_funcs/plot_ppc.R")
+```
+
+```{r}
+#| include: false
+p6_data <- readRDS("data/p2_data.Rds")
+```
+
+### Standardize Variables
+```{r}
+p6_data <- p6_data %>%
+  mutate(across(c(esm_neg3, esm_neg3_con, zpos, zneg, zdis), scale))
+
+p6_data %>%
+  select(esm_neg3, esm_neg3_bin, esm_neg3_con, zpos, zneg, zdis) %>%
+  psych::describe()
+```
+
+### Julia Backend Setup
+```{r}
+ctJuliaSetup(threads = 10, force = TRUE)
+```
+
+## Two-Part Approach (Censored Magnitude)
+
+### Model Specification
+```{r}
+neg3_twopart_ctsem <- "
+# Measurement Model
+## BINARY
+bin_neg3_B =~ esm_neg3_bin
+bin_neg3_W =~ esm_neg3_bin
+
+## CONT.
+con_neg3_B =~ esm_neg3_con
+con_neg3_W =~ esm_neg3_con
+
+# Between/Trend
+bin_neg3_B  ~  bin_neg3_B
+bin_neg3_B ~~  0*bin_neg3_B
+bin_neg3_B %~% bin_neg3_B
+
+con_neg3_B  ~  con_neg3_B
+con_neg3_B ~~  0*con_neg3_B
+con_neg3_B %~% con_neg3_B
+
+bin_neg3_B %~% con_neg3_B
+
+# Within (dynamic) factor
+## BINARY
+bin_neg3_W  ~  bin_neg3_W
+bin_neg3_W ~~  bin_neg3_W
+bin_neg3_W %~% bin_neg3_W
+
+## CONT.
+con_neg3_W  ~  con_neg3_W
+con_neg3_W ~~  con_neg3_W
+con_neg3_W %~% con_neg3_W
+
+## T0MEAN
+bin_neg3_B ~t0~ 1
+con_neg3_B ~t0~ 1
+
+BINARY: esm_neg3_bin
+CENSOR: esm_neg3_con
+"
+
+neg3_twopart_syn <- ct_lavaan(neg3_twopart_ctsem, data = p6_data)
+
+neg3_twopart_mod <- ctModel(
+  type          = "ct",
+  id            = "id",
+  time          = "time_day",
+  latentNames   = neg3_twopart_syn$latentNames,
+  manifestNames = neg3_twopart_syn$manifestNames,
+  LAMBDA        = neg3_twopart_syn$LAMBDA,
+  DRIFT         = neg3_twopart_syn$DRIFT,
+  DIFFUSION     = neg3_twopart_syn$DIFFUSION,
+  T0VAR         = neg3_twopart_syn$T0VAR,
+  CINT          = neg3_twopart_syn$CINT,
+  T0MEANS       = neg3_twopart_syn$T0MEANS,
+  MANIFESTMEANS = neg3_twopart_syn$MANIFESTMEANS,
+  manifesttype  = neg3_twopart_syn$manifesttype,
+  censormin     = neg3_twopart_syn$censormin,
+  censormax     = neg3_twopart_syn$censormax,
+  n.TIpred      = 3,
+  TIpredNames   = c("zpos", "zneg", "zdis")
+)
+
+print(neg3_twopart_mod$pars[neg3_twopart_mod$pars$matrix == "DRIFT",
+                             c("matrix", "row", "col",
+                               "zpos_effect", "zneg_effect", "zdis_effect")])
+```
+
+### Fit Model
+```{r}
+#| eval: false
+neg3_twopart_fit <- ctFit(
+  datalong = p6_data,
+  model    = neg3_twopart_mod,
+  backend  = "julia",
+  optimcontrol = list(maxiter = 10000),
+  cores = 10, plot = FALSE, priors = TRUE
+)
+saveRDS(neg3_twopart_fit, "06_files/neg3_twopart_fit.Rds")
+```
+
+### Evaluate Model Fit
+```{r}
+neg3_twopart_fit <- readRDS("06_files/neg3_twopart_fit.Rds")
+summary(neg3_twopart_fit)
+```
+
+#### Residual Auto-Correlation
+```{r}
+#| eval: false
+acf_neg3_twopart_fit <- ctACFresiduals(
+  neg3_twopart_fit,
+  varnames = neg3_twopart_syn$manifestNames,
+  nboot = 10
+)
+saveRDS(acf_neg3_twopart_fit, "06_files/acf_neg3_twopart.rds")
+```
+
+```{r}
+acf_neg3_twopart_fit <- readRDS("06_files/acf_neg3_twopart.rds")
+item_manifests <- neg3_twopart_syn$manifestNames
+acf_neg3_twopart <- acf_neg3_twopart_fit$data
+
+diag_dt_fit <- unique(
+  acf_neg3_twopart[Variable %in% item_manifests,
+                   .(TimeInterval, Variable, Q50 = `Q50%`, lo = `Q2.5%`, hi = `Q97.5%`, SignificanceLevel)]
+)
+
+ggplot(diag_dt_fit, aes(x = TimeInterval, y = Q50)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = .2) +
+  geom_line() +
+  geom_hline(aes(yintercept = SignificanceLevel), linetype = "dotted") +
+  geom_hline(aes(yintercept = -SignificanceLevel), linetype = "dotted") +
+  geom_hline(yintercept = 0, color = "grey50", linewidth = .3) +
+  facet_wrap(~ Variable, ncol = 6, scales = "free_y") +
+  labs(title = "Residual autocorrelation (Two-Part, censored magnitude)", y = "ACF", x = "Time interval (days)") +
+  theme_minimal()
+```
+
+#### Posterior Predictive Check
+```{r}
+#| eval: false
+pp_plot_neg3_twopart_fit <- ctPostPredPlots(neg3_twopart_fit)
+saveRDS(pp_plot_neg3_twopart_fit, "06_files/pp_plot_neg3_twopart_fit.Rds")
+save_postpred_plots(pp_plot_neg3_twopart_fit, "06_files/postpred_neg3_twopart")
+```
+
+```{r}
+pp_plot_neg3_twopart_fit <- readRDS("06_files/pp_plot_neg3_twopart_fit.Rds")
+
+for (panel_name in names(pp_plot_neg3_twopart_fit)) {
+  cat("\n---", panel_name, "---\n")
+  tryCatch(
+    print(pp_plot_neg3_twopart_fit[[panel_name]]),
+    error = function(e) {
+      cat("  [", panel_name, "panel failed to render:", conditionMessage(e), "]\n")
+    }
+  )
+}
+```
+
+### Visual
+#### Binary
+```{r}
+set.seed(1111)
+ct_effects_plot(
+  neg3_twopart_fit,
+  effects = c("bin_neg3_W>bin_neg3_W"),
+  times = seq(0, 8, 0.01),
+  ylim = c(0, 1),
+  title = "Auto-effects: Two-Part (Censored Magnitude)",
+  legend_labels = c("Negative Exp. (occurrence) -> Negative Exp. (occurrence)"),
+  latentNames = neg3_twopart_syn$latentNames
+)
+```
+
+#### Magnitude
+```{r}
+set.seed(1111)
+ct_effects_plot(
+  neg3_twopart_fit,
+  effects = c("con_neg3_W>con_neg3_W"),
+  times = seq(0, 8, 0.01),
+  ylim = c(0, 1),
+  title = "Auto-effects: Two-Part (Censored Magnitude)",
+  legend_labels = c("Negative Exp. (magnitude) -> Negative Exp. (magnitude)"),
+  latentNames = neg3_twopart_syn$latentNames
+)
+```
+
+### Cross-level Interaction (+/- 1 SD)
+```{r}
+tip_names <- c("zpos", "zneg", "zdis")
+
+for (nm in tip_names) {
+  tipred_plots <- ctPredictTIP(
+    neg3_twopart_fit,
+    tipreds    = nm,
+    doDynamics = TRUE,
+    plot       = TRUE
+  )
+
+  print(
+    tipred_plots$Process$Latent[[nm]] +
+      ggplot2::labs(title = paste0("Latent trajectories by ", nm, " (-1 SD / median / +1 SD)"))
+  )
+  print(
+    tipred_plots$Dynamics$Independent[[nm]] +
+      ggplot2::labs(title = paste0("Dynamics (impulse response) by ", nm, " (-1 SD / median / +1 SD)"))
+  )
+}
+```
+
+```{r}
+#| include: false
+saveRDS(p6_data, "data/p6_data.Rds")
+```

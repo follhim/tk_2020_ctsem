@@ -9,7 +9,11 @@ book:
   chapters:
     - index.qmd
     - 01_data_prep.qmd
-    - 02_observed_ctsem.qmd
+    - 02_pa_model.qmd
+    - 03_ple_model.qmd
+    - 04_neg_model.qmd
+    - 05_dis_model.qmd
+    - 06_negexp_model.qmd
 
 format:
   html:
@@ -18,6 +22,7 @@ format:
       - brand
   pdf:
     documentclass: scrreprt
+
 
 
 

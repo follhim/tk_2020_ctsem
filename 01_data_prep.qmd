@@ -61,6 +61,28 @@ p1_data <- p1_data %>%
   ungroup()
 ```
 
+### Drop Missing Time
+```{r}
+org_count <- p1_data %>%
+  nrow()
+org_count
+clean_count <- p1_data %>% 
+  filter(!is.na(time_day)) %>%
+  nrow()
+clean_count
+
+org_count - clean_count
+```
+
+:::callout-note
+We only lost 36 responses, miniscule.
+:::
+
+```{r}
+p1_data <- p1_data %>% 
+  filter(!is.na(time_day))
+```
+
 ## Descriptives
 ### What is N?
 ```{r}
@@ -139,7 +161,6 @@ p1_data %>%
   ggplot(aes(esm_psx_sum)) +
   geom_bar()
 ```
-
 
 ### Items
 ```{r}

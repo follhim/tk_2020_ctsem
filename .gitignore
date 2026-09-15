@@ -7,3 +7,6 @@
 .sav*
 /data/
 /.quarto/
+/books/
+**/postpred_*/
+*.Rds
