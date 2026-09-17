@@ -29,19 +29,17 @@ names(p1_data) <- tolower(names(p1_data))
 ```{r}
 p1_data <- p1_data %>%
   mutate(
-    across(c(esm12, esm19:esm22), ~ .x - 1, .names = "{.col}_r") #<1>
+    across(c(esm12, esm19:esm22), ~ .x - 1) #<1>
   ) %>%
   mutate(
-    esm_psx_sum = rowSums(across(c(esm12_r, esm19_r, esm20_r, esm21_r, esm22_r)), na.rm = FALSE) #<2>
+    esm_psx_sum = rowSums(across(c(esm12, esm19:esm22)), na.rm = FALSE) #<2>
   )
 ```
 
 :::callout-note
 I'm creating my own version of the Psychotic-like Experiences composite variable. The existing variables/indices seek to address the big floor effect. We actually have a decent way of addressing this according to Muthen et al.
 
-In Line-3,I am recoding so that "NO" = 0, instead of 1. 
-
-In Line-6, I am getting the sum, but if a single variable is missing, we will treat their overall score as missing. 
+We will create a regular 
 :::
 
 ### Create Time Variable
@@ -205,11 +203,11 @@ bar_pct(p1_data, esm15)) +
 
 #### Psychotic-like Exp.
 ```{r}
-(bar_pct(p1_data, esm12_r) +
-bar_pct(p1_data, esm19_r) +
-bar_pct(p1_data, esm20_r) +
-bar_pct(p1_data, esm21_r) +
-bar_pct(p1_data, esm22_r)) +
+(bar_pct(p1_data, esm12) +
+bar_pct(p1_data, esm19) +
+bar_pct(p1_data, esm20) +
+bar_pct(p1_data, esm21) +
+bar_pct(p1_data, esm22)) +
   plot_layout(ncol = 2)
 ```
 
@@ -224,9 +222,9 @@ bar_pct(p1_data, esm10)) +
 
 ## Separating Floor Effect
 :::callout-important
-Luckily, Muthen et al. actually came out with a pretty clever and theoretically meaningful way to address floor effects. 
+Luckily, [Muthen et al.](https://www.statmodel.com/download/DSEMFloorEffects.pdf) actually came out with a pretty clever and theoretically meaningful way to address floor effects: a **hurdle modeling** approach.
 
-Instead of dropping the floor effect (the lowest value possible), Muthen et al. recommends creating two variables from the original variable. They call this the **two-part** approach for dealing with floor effects.
+Instead of dropping the floor effect (the lowest value possible), Muthen et al. recommends creating two variables from the original variable.
 
 **Step 1**: Create a binary variable.  
 Create a binary variable that collapses all **non-floor** scores as `1`. Thus, *conceptually* this variable represents whether a construct is meaingfully *occuring* or not.
@@ -242,6 +240,8 @@ In the second step, we code all floor effects as `NA` (i.e., missing) and retain
 Thus, the continous variable is represents what is taking place **AFTER** removed floor effects which drowned out the variance. 
 
 Thus, in analytical models we should include **both** variables (only possible in SEMs) and allowed to correlate with one another. In doing so, we can understand if a distal variable is related to the **occurrence** of a construct *AND* also when it is occurring, the **magnitude** of that relationship.
+
+For the truncated variable, we will use a tobit/censored specification. 
 :::
 
 ### Neg-Aff

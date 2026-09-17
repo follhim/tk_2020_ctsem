@@ -1,0 +1,121 @@
+
+\documentclass[a4paper]{article}
+\usepackage{geometry}
+\geometry{paperwidth=\maxdimen,paperheight=\maxdimen,margin=1cm}
+
+\usepackage[fleqn]{amsmath} %for multiple line equations
+\usepackage[active,tightpage,displaymath]{preview}
+\usepackage{bm}
+\newcommand{\vect}[1]{\boldsymbol{\mathbf{#1}}}
+
+\begin{document}
+\pagenumbering{gobble}
+\begin{normalsize}
+
+ \setcounter{MaxMatrixCols}{200}
+ \begin{flalign*}
+  &\begin{aligned}
+  \parbox{10em}{\centering{Initial\linebreak and subject\linebreak parameter\linebreak distribution:}}
+             &\underbrace{\begin{bmatrix}
+\text{auto\_posaff\_W}_i\\ 
+\text{cint\_posaff\_B}_i\\ 
+\text{T0MEANS\_posaff\_B}_i\\ 
+\text{T0MEANS\_posaff\_W}_i
+\end{bmatrix} 
+            }_{\vect{\phi}(i)} \approx \mathrm{N} \left(
+              \begin{bmatrix}
+-5.257\\ 
+0.004\\ 
+0\\ 
+0
+\end{bmatrix}, \begin{bmatrix}
+3.765 & 0.006 & 0 & 0\\ 
+0.006 & 0.006 & 0 & 0\\ 
+0 & 0 & 0.28 & 0\\ 
+0 & 0 & 0 & 0.152
+\end{bmatrix} \right)  + \underbrace{\begin{bmatrix}
+-0.242 & -0.525 & 0.593\\ 
+0 & 0 & 0\\ 
+0 & 0 & 0\\ 
+0 & 0 & 0
+\end{bmatrix}}_{\vect{\hat\beta}}
+  \underbrace{
+    \begin{bmatrix}
+\text{zpos}\\ 
+\text{zneg}\\ 
+\text{zdis}
+\end{bmatrix}}_{\vect{z}} \\\parbox{10em}{\centering{Deterministic\linebreak change:}}
+  &\underbrace{\mathrm{d}
+    \begin{bmatrix}
+\text{posaff\_B}\\ 
+\text{posaff\_W}
+\end{bmatrix} 
+    \big(t\big)}_{\mathrm{d} \vect{\eta} (t)}	=  \left(
+      \underbrace{
+        \begin{bmatrix}
+-0.023 & 0\\ 
+0 & -5.257
+\end{bmatrix}
+      }_{\underbrace{\vect{A}}_\textrm{DRIFT}} \underbrace{
+        \begin{bmatrix}
+\text{posaff\_B}\\ 
+\text{posaff\_W}
+\end{bmatrix} 
+        \big(t\big)
+      }_{\vect{\eta} (t)}	+ \underbrace{
+        \begin{bmatrix}
+0.004\\ 
+0
+\end{bmatrix}
+      }_{\underbrace{\vect{b}}_\textrm{CINT}}
+      \right) \mathrm{d}t \quad + \nonumber \\ \\
+    \parbox{10em}{\centering{Random\linebreak change:}}
+    & \qquad \qquad \quad \underbrace{UcorSDtoChol\left\{
+      \begin{bmatrix}
+0 & 0\\ 
+0 & 1.8
+\end{bmatrix}\right\}
+    }_{\underbrace{\vect{G}}_\textrm{DIFFUSION}}
+    \underbrace{\mathrm{d}
+      \begin{bmatrix}
+W_{1}\\ 
+W_{2}
+\end{bmatrix} 
+      (t)}_{\mathrm{d} \vect{W}(t)} \\ \\\parbox{10em}{\centering{Observations:}}
+&\underbrace{
+      \begin{bmatrix}
+\text{esm\_pa}
+\end{bmatrix}  
+      (t)}_{\vect{Y}(t)} = 
+        \underbrace{
+          \begin{bmatrix}
+1 & 1
+\end{bmatrix} 
+        }_{\underbrace{\vect{\Lambda}}_\textrm{LAMBDA}} \underbrace{
+          \begin{bmatrix}
+\text{posaff\_B}\\ 
+\text{posaff\_W}
+\end{bmatrix} 
+          (t)}_{\vect{\eta}(t)} +
+        \underbrace{
+          \begin{bmatrix}
+0
+\end{bmatrix} 
+        }_{\underbrace{\vect{\tau}}_\textrm{MANIFESTMEANS}} + \nonumber \\ \\
+    \parbox{10em}{\centering{Observation\linebreak noise:}}
+    & \qquad \qquad \quad  \underbrace{UcorSDtoChol \left\{
+                \begin{bmatrix}
+0.585
+\end{bmatrix}\right\}  
+              }_{\underbrace{\vect{\Theta}}_\textrm{MANIFESTVAR}}
+              \underbrace{
+          \begin{bmatrix}
+\epsilon_{1}
+\end{bmatrix} 
+          (t)}_{\vect{\epsilon}(t)} \\ \\\parbox{10em}{\centering{System noise\linebreak distribution per time step:}}
+          &\Delta \big[W_{j \in [1,2]}\big](t-u)   \sim  \mathrm{N}(0,t-u) \\ \\
+      \end{aligned} \\&\textrm{Note: } UcorSDtoChol\textrm{ converts lower tri matrix of standard deviations and unconstrained correlations to Cholesky factor,} \\
+&UcorSDtoCov =\textrm{ transposed cross product of UcorSDtoChol, to give covariance, See Driver \& Voelkle (2018) p11.} \\&\textrm{Individual specific notation (subscript i) only shown for subject parameter distribution -- pop. means shown elsewhere.} \\
+&\textrm{Linearised approximation of subject parameter distribution shown.} \\\end{flalign*}
+        \end{normalsize}
+\end{document}

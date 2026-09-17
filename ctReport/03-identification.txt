@@ -1,0 +1,38 @@
+Convergence and identification
+
+Backend: julia
+Log likelihood: -7573.6
+Free parameters: 31
+AIC: 15209.2
+
+Optimizer
+  converged: TRUE  (certification: certified)
+  iterations: 829
+  log likelihood still available: 5.09231e-09  (tolerance 1e-06)
+  gradient norm: 0.00048054
+  line search: backtracking
+
+Information matrix
+  condition number: 6573.18
+  weak directions: 0
+
+Reported interval against the curvature at the estimate
+  ratio > 100: 0 parameter(s)
+  no curvature (spread absent, not small): 0 parameter(s)
+  T0m_con_psx_B  se 0.575953  curvature 0.0220385  ratio 26.1339  nullmass 0
+  mm_esm_psx_con  se 0.561934  curvature 0.0216202  ratio 25.9911  nullmass 0
+  diff_con_psx_W  se 0.3105  curvature 0.025522  ratio 12.166  nullmass 0
+  auto_con_psx_W  se 0.586998  curvature 0.0485556  ratio 12.0892  nullmass 0
+  popsd_mm_esm_psx_con  se 0.697213  curvature 0.101032  ratio 6.90094  nullmass 0
+
+Residual covariance: on random effects carried as states and learned observation by observation, so early residuals for a subject are larger than late ones
+
+Read: a condition number above about 1e6, a non-positive eigenvalue, or
+any weak direction means the data do not pin every parameter. Estimates
+can then be moved along that direction without worsening the fit, so
+their intervals describe a shape the data did not choose. The ratio
+above says the same thing per parameter: how much wider the reported
+interval is than that parameter's own curvature supports. Healthy fits
+sit near 1; a ratio of 100 means the width is entanglement with the
+other parameters, and it will not repeat between runs.
+04-loglik-profile says which individual parameters are involved.

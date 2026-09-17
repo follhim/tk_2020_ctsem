@@ -13,11 +13,14 @@ execute:
 ---
 
 ## Initial Set Up
-### Load Packages/Cust Functions
+### Load Packages/Cust Fugeomibbonnctions
 ```{r}
+# remotes::install_github("cdriveraus/ctsem", ref = "juliaFit", force = T)
 pacman::p_load(tidyverse, ctsem)
 source("cust_funcs/lavaan_parser.R")
 source("cust_funcs/ct_plot.R")
+source("cust_funcs/ct_latex_html.R")
+source("cust_funcs/mod_plot.R")
 ```
 
 ```{r}
@@ -28,7 +31,7 @@ p3_data <- readRDS("data/p2_data.Rds")
 ### Standardize Variables
 ```{r}
 p3_data <- p3_data %>%
-  mutate(across(c(esm_psx_con, zpos, zneg, zdis, esm_psx_sum), scale))
+  mutate(across(c(zpos, zneg, zdis, esm_psx_sum), scale))
 
 p3_data %>%
   select(esm_psx_sum, esm_psx_bin, esm_psx_con, zpos, zneg, zdis) %>%
@@ -39,8 +42,8 @@ p3_data %>%
 ```{r}
 library(ctsem)
 ctJuliaSetup(threads = 10, force = TRUE)
-JuliaConnectoR::juliaEval("ContinuousTimeSEM._CTSEM_COUNT_MAX_LOG_RATE[] = 15.0")
-JuliaConnectoR::juliaEval("ContinuousTimeSEM._CTSEM_COUNT_GENERATE_MAX[] = 500")
+# JuliaConnectoR::juliaEval("ContinuousTimeSEM._CTSEM_COUNT_MAX_LOGATE[] = 15.0")
+# JuliaConnectoR::juliaEval("ContinuousTimeSEM._CTSEM_COUNT_GENERATE_MAX[] = 500")
 ```
 
 ## PSX Index (Censored)
@@ -90,9 +93,28 @@ psx_censored_mod <- ctModel(
   TIpredNames   = c("zpos", "zneg", "zdis")
 )
 
+effect_cols <- c("zpos_effect", "zneg_effect", "zdis_effect")
+
+# Reverted per request: apply TIpred moderation to every parameter (both
+# the between/trait psx_B and within/dynamic psx_W processes), matching
+# ctModel()'s own default (tipredDefault = TRUE leaves every cell's effect
+# columns TRUE already) rather than restricting to psx_W only. No blanket
+# off/selective re-enable here anymore -- this block just confirms/leaves
+# the default in place and prints it for visibility.
+psx_w_idx <- match("psx_W", psx_censored_syn$latentNames)
+target_psx_w <- psx_censored_mod$pars$matrix == "DRIFT" &
+  as.character(psx_censored_mod$pars$row) == as.character(psx_w_idx) &
+  as.character(psx_censored_mod$pars$col) == as.character(psx_w_idx)
+
+# Safety check: ctModel() has been observed to silently default
+# indvarying = FALSE on a free DRIFT diagonal parameter even when nothing
+# in this script asked for that. Confirm psx_W's autoregression is still
+# individually varying, and force it back on if ctModel() defaulted it off.
+stopifnot("indvarying" %in% names(psx_censored_mod$pars))
+psx_censored_mod$pars[target_psx_w, "indvarying"] <- TRUE
+
 print(psx_censored_mod$pars[psx_censored_mod$pars$matrix == "DRIFT",
-                             c("matrix", "row", "col",
-                               "zpos_effect", "zneg_effect", "zdis_effect")])
+                             c("matrix", "row", "col", "indvarying", effect_cols)])
 ```
 
 ### Fit Model
@@ -114,58 +136,21 @@ psx_censored_fit <- readRDS("03_files/psx_censored_fit.Rds")
 summary(psx_censored_fit)
 ```
 
-#### Residual Auto-Correlation
-```{r}
-#| eval: false
-acf_psx_censored_fit <- ctACFresiduals(
-  psx_censored_fit,
-  varnames = psx_censored_syn$manifestNames,
-  nboot = 10
-)
-saveRDS(acf_psx_censored_fit, "03_files/acf_psx_censored.rds")
-```
-
-```{r}
-acf_psx_censored_fit <- readRDS("03_files/acf_psx_censored.rds")
-item_manifests <- psx_censored_syn$manifestNames
-acf_psx_censored <- acf_psx_censored_fit$data
-
-diag_dt_fit <- unique(
-  acf_psx_censored[Variable %in% item_manifests,
-                       .(TimeInterval, Variable, Q50 = `Q50%`, lo = `Q2.5%`, hi = `Q97.5%`, SignificanceLevel)]
-)
-
-ggplot(diag_dt_fit, aes(x = TimeInterval, y = Q50)) +
-  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = .2) +
-  geom_line() +
-  geom_hline(aes(yintercept = SignificanceLevel), linetype = "dotted") +
-  geom_hline(aes(yintercept = -SignificanceLevel), linetype = "dotted") +
-  geom_hline(yintercept = 0, color = "grey50", linewidth = .3) +
-  facet_wrap(~ Variable, ncol = 6, scales = "free_y") +
-  labs(title = "Residual autocorrelation (PSX Index, censored)", y = "ACF", x = "Time interval (days)") +
-  theme_minimal()
-```
-
 #### Posterior Predictive Check
 ```{r}
 #| eval: false
 pp_plot_psx_censored_fit <- ctPostPredPlots(psx_censored_fit)
 saveRDS(pp_plot_psx_censored_fit, "03_files/pp_plot_psx_censored_fit.Rds")
-save_postpred_plots(pp_plot_psx_censored_fit, "03_files/postpred_psx_censored")
+# save_postpred_plots(pp_plot_psx_censored_fit, "03_files/postpred_psx_censored")
 ```
 
 ```{r}
 pp_plot_psx_censored_fit <- readRDS("03_files/pp_plot_psx_censored_fit.Rds")
 
-for (panel_name in names(pp_plot_psx_censored_fit)) {
-  cat("\n---", panel_name, "---\n")
-  tryCatch(
-    print(pp_plot_psx_censored_fit[[panel_name]]),
-    error = function(e) {
-      cat("  [", panel_name, "panel failed to render:", conditionMessage(e), "]\n")
-    }
-  )
-}
+pp_plot_psx_censored_fit$Density
+pp_plot_psx_censored_fit$MeanTrajectory
+pp_plot_psx_censored_fit$LaggedCovariance_esm_psx_sum
+pp_plot_psx_censored_fit$SubjectLogLik
 ```
 
 ### Visual
@@ -182,34 +167,19 @@ ct_effects_plot(
 )
 ```
 
-### Cross-level Interaction (+/- 1 SD)
-```{r}
-tip_names <- c("zpos", "zneg", "zdis")
+:::callout-important
+Although model fit is acceptable, conceptually, a censored/tobit model doesn't make sense when we know the floor effect, truly reflects the floor. 
 
-for (nm in tip_names) {
-  tipred_plots <- ctPredictTIP(
-    psx_censored_fit,
-    tipreds    = nm,
-    doDynamics = TRUE,
-    plot       = TRUE
-  )
-
-  print(
-    tipred_plots$Process$Latent[[nm]] +
-      ggplot2::labs(title = paste0("PSX Index (Censored): latent trajectories by ", nm, " (-1 SD / median / +1 SD)"))
-  )
-  print(
-    tipred_plots$Dynamics$Independent[[nm]] +
-      ggplot2::labs(title = paste0("PSX Index (Censored): dynamics (impulse response) by ", nm, " (-1 SD / median / +1 SD)"))
-  )
-}
-```
+It's why we will perform a hurdle/two-part approach below. In this approach, we apply the censored model for the truncated variable, which implies there is indeed values below the **new floor** that has been artificially induced, and thus continuous.
+:::
 
 ## Two-Part Approach (Censored Magnitude)
 
 ### Model Specification
 ```{r}
 psx_twopart_ctsem <- "
+
+TIPRED: zpos, zneg, zdis
 # Measurement Model
 ## BINARY
 bin_psx_B =~ esm_psx_bin
@@ -220,11 +190,11 @@ con_psx_B =~ esm_psx_con
 con_psx_W =~ esm_psx_con
 
 # Between/Trend
-bin_psx_B  ~  bin_psx_B
+bin_psx_B  ~  0*bin_psx_B
 bin_psx_B ~~  0*bin_psx_B
 bin_psx_B %~% bin_psx_B
 
-con_psx_B  ~  con_psx_B
+con_psx_B  ~  0*con_psx_B
 con_psx_B ~~  0*con_psx_B
 con_psx_B %~% con_psx_B
 
@@ -232,12 +202,12 @@ bin_psx_B %~% con_psx_B
 
 # Within (dynamic) factor
 ## BINARY
-bin_psx_W  ~  bin_psx_W
+bin_psx_W  ~  bin_psx_W + bin_psx_W:zpos + bin_psx_W:zneg + bin_psx_W:zdis
 bin_psx_W ~~  bin_psx_W
 bin_psx_W %~% bin_psx_W
 
 ## CONT.
-con_psx_W  ~  con_psx_W
+con_psx_W  ~  con_psx_W + con_psx_W:zpos + con_psx_W:zneg + con_psx_W:zdis
 con_psx_W ~~  con_psx_W
 con_psx_W %~% con_psx_W
 
@@ -245,48 +215,43 @@ con_psx_W %~% con_psx_W
 bin_psx_B ~t0~ 1
 con_psx_B ~t0~ 1
 
+# esm_psx_con ~ 1
+
 BINARY: esm_psx_bin
 CENSOR: esm_psx_con
 "
 
 psx_twopart_syn <- ct_lavaan(psx_twopart_ctsem, data = p3_data)
 
-psx_twopart_mod <- ctModel(
-  type          = "ct",
-  id            = "id",
-  time          = "time_day",
-  latentNames   = psx_twopart_syn$latentNames,
-  manifestNames = psx_twopart_syn$manifestNames,
-  LAMBDA        = psx_twopart_syn$LAMBDA,
-  DRIFT         = psx_twopart_syn$DRIFT,
-  DIFFUSION     = psx_twopart_syn$DIFFUSION,
-  T0VAR         = psx_twopart_syn$T0VAR,
-  CINT          = psx_twopart_syn$CINT,
-  T0MEANS       = psx_twopart_syn$T0MEANS,
-  MANIFESTMEANS = psx_twopart_syn$MANIFESTMEANS,
-  manifesttype  = psx_twopart_syn$manifesttype,
-  censormin     = psx_twopart_syn$censormin,
-  censormax     = psx_twopart_syn$censormax,
-  n.TIpred      = 3,
-  TIpredNames   = c("zpos", "zneg", "zdis")
-)
-
-effect_cols <- c("zpos_effect", "zneg_effect", "zdis_effect")
-
-con_w_idx <- match("con_psx_W", psx_twopart_syn$latentNames)
-target_con <- psx_twopart_mod$pars$matrix == "DRIFT" &
-              as.character(psx_twopart_mod$pars$row) == as.character(con_w_idx) &
-              as.character(psx_twopart_mod$pars$col) == as.character(con_w_idx)
-
-psx_twopart_mod$pars[target_con, effect_cols] <- FALSE
+# ct_lavaan() already builds the ctModel() object AND -- because the spec
+# above declares "bin_psx_W:zpos + bin_psx_W:zneg + bin_psx_W:zdis" /
+# "con_psx_W:zpos + ..." cross-level lines -- already ran
+# ct_apply_crosslevel() on it internally (crosslevel = TRUE is the
+# default): every zpos_effect/zneg_effect/zdis_effect column is already
+# switched off except on bin_psx_W's and con_psx_W's own DRIFT diagonal,
+# and indvarying is already forced TRUE on those same cells. So no manual
+# match()/target_*/pars[...] <- TRUE block is needed here (that pattern is
+# only for specs, like the PSX Index one above, that don't use inline
+# "latent:tipred" declarations and instead want every TIpred effect left
+# on via ctModel()'s tipredDefault).
+psx_twopart_mod <- psx_twopart_syn$mod
 
 print(psx_twopart_mod$pars[psx_twopart_mod$pars$matrix == "DRIFT",
-                            c("matrix", "row", "col", effect_cols)])
+                           c("matrix", "row", "col", "indvarying", effect_cols)])
 ```
+
+
+### Model
+```{r}
+#| out.extra: 'class="lightbox"'
+ctModelLatexHTML(psx_twopart_mod)
+```
+
 
 ### Fit Model
 ```{r}
 #| eval: false
+ctJuliaSetup(threads = 10, force = TRUE)
 psx_twopart_fit <- ctFit(
   datalong = p3_data,
   model    = psx_twopart_mod,
@@ -294,45 +259,16 @@ psx_twopart_fit <- ctFit(
   optimcontrol = list(maxiter = 10000),
   cores = 10, plot = FALSE, priors = TRUE
 )
+
+beepr::beep(8)
 saveRDS(psx_twopart_fit, "03_files/psx_twopart_fit.Rds")
 ```
 
 ### Evaluate Model Fit
 ```{r}
+#| out.extra: 'class="lightbox"'
 psx_twopart_fit <- readRDS("03_files/psx_twopart_fit.Rds")
-summary(psx_twopart_fit)
-```
-
-#### Residual Auto-Correlation
-```{r}
-#| eval: false
-acf_psx_twopart_fit <- ctACFresiduals(
-  psx_twopart_fit,
-  varnames = psx_twopart_syn$manifestNames,
-  nboot = 10
-)
-saveRDS(acf_psx_twopart_fit, "03_files/acf_psx_twopart.rds")
-```
-
-```{r}
-acf_psx_twopart_fit <- readRDS("03_files/acf_psx_twopart.rds")
-item_manifests <- psx_twopart_syn$manifestNames
-acf_psx_twopart <- acf_psx_twopart_fit$data
-
-diag_dt_fit <- unique(
-  acf_psx_twopart[Variable %in% item_manifests,
-                       .(TimeInterval, Variable, Q50 = `Q50%`, lo = `Q2.5%`, hi = `Q97.5%`, SignificanceLevel)]
-)
-
-ggplot(diag_dt_fit, aes(x = TimeInterval, y = Q50)) +
-  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = .2) +
-  geom_line() +
-  geom_hline(aes(yintercept = SignificanceLevel), linetype = "dotted") +
-  geom_hline(aes(yintercept = -SignificanceLevel), linetype = "dotted") +
-  geom_hline(yintercept = 0, color = "grey50", linewidth = .3) +
-  facet_wrap(~ Variable, ncol = 6, scales = "free_y") +
-  labs(title = "Residual autocorrelation (Two-Part, censored magnitude)", y = "ACF", x = "Time interval (days)") +
-  theme_minimal()
+ctModelLatexHTML(psx_twopart_fit)
 ```
 
 #### Posterior Predictive Check
@@ -340,37 +276,51 @@ ggplot(diag_dt_fit, aes(x = TimeInterval, y = Q50)) +
 #| eval: false
 pp_plot_psx_twopart_fit <- ctPostPredPlots(psx_twopart_fit)
 saveRDS(pp_plot_psx_twopart_fit, "03_files/pp_plot_psx_twopart_fit.Rds")
-save_postpred_plots(pp_plot_psx_twopart_fit, "03_files/postpred_psx_twopart")
+beepr::beep(8)
+# save_postpred_plots(pp_plot_psx_twopart_fit, "03_files/postpred_psx_twopart")
 ```
 
 ```{r}
 pp_plot_psx_twopart_fit <- readRDS("03_files/pp_plot_psx_twopart_fit.Rds")
 
-for (panel_name in names(pp_plot_psx_twopart_fit)) {
-  cat("\n---", panel_name, "---\n")
-  tryCatch(
-    print(pp_plot_psx_twopart_fit[[panel_name]]),
-    error = function(e) {
-      cat("  [", panel_name, "panel failed to render:", conditionMessage(e), "]\n")
-    }
-  )
-}
+pp_plot_psx_twopart_fit$Density
+pp_plot_psx_twopart_fit$MeanTrajectory
+pp_plot_psx_twopart_fit$LaggedCovariance_esm_psx_bin
+pp_plot_psx_twopart_fit$LaggedCovariance_esm_psx_con
+pp_plot_psx_twopart_fit$SubjectLogLik
 ```
 
 ### Visual
+```{r}
+summary(psx_twopart_fit)$parmatrices %>%
+  filter(matrix == "DRIFT") %>%
+  filter(row == col) %>%
+  filter(Mean != 0) 
+```
+
+:::callout-note
+The first drift effect refers to the rate of decay for the occurence of any PSX. While the second drift effect refers to decay for the magnitude of PSX.
+:::
+
 #### Binary
 ```{r}
 set.seed(1111)
 ct_effects_plot(
   psx_twopart_fit,
   effects = c("bin_psx_W>bin_psx_W"),
-  times = seq(0, 8, 0.01),
+  times = seq(0, 2, 0.01),
   ylim = c(0, 1),
   title = "Auto-effects: Two-Part (Censored Magnitude)",
   legend_labels = c("PSX (occurrence) -> PSX (occurrence)"),
   latentNames = psx_twopart_syn$latentNames
 )
 ```
+
+:::callout-important
+Since this indicator only reflects whether PSX was endorsed or not, it carries no information about how severe the experience was. The drift here captures the rate at which the "just endorsed PSX" state fades back to baseline likelihood.
+
+Technical interpretation: when an individual reports PSX, the elevated likelihood of reporting PSX again decays at a specific rate (−3.482) — i.e., endorsing PSX at one moment tells you little about whether they'll endorse it again shortly after; occurrence is not "sticky."
+:::
 
 #### Magnitude
 ```{r}
@@ -386,30 +336,174 @@ ct_effects_plot(
 )
 ```
 
-### Cross-level Interaction (+/- 1 SD)
+:::callout-important
+Since this indicator captures how intense/severe PSX is (not just present/absent), the drift here captures the rate at which elevated severity returns to baseline. A slow return to equilibrium indicates high inertia.
+
+Technical interpretation: when someone reports greater PSX, that elevated severity tends to persist — it takes longer to decay back down to their typical (floor) level, rather than resolving quickly.
+
+**Putting them together:** occurrence is volatile (endorsing PSX at any moment doesn't predict endorsing it again soon), while magnitude is inertial (once severity rises, it stays elevated for a while before subsiding) — i.e., whether someone reports PSX fluctuates quickly, but how bad it is when they do tends to linger.
+:::
+
+### Binary Cross-level Interaction
+#### Auto-Effect
 ```{r}
-tip_names <- c("zpos", "zneg", "zdis")
+summary(psx_twopart_fit)$tipreds %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("param") %>%
+  filter(grepl("auto_bin_psx_W", param)) %>%
+  select(param, mean, `2.5%`, `97.5%`) %>%
+  gt::gt()
+```
 
-for (nm in tip_names) {
-  tipred_plots <- ctPredictTIP(
-    psx_twopart_fit,
-    tipreds    = nm,
-    doDynamics = TRUE,
-    plot       = TRUE
-  )
+:::callout-note
+Two significant cross-level interactions:  
+-  ZPOS and ZDIS, both associated with slower decay of PLE.
+:::
 
-  print(
-    tipred_plots$Process$Latent[[nm]] +
-      ggplot2::labs(title = paste0("Latent trajectories by ", nm, " (-1 SD / median / +1 SD)"))
-  )
-  print(
-    tipred_plots$Dynamics$Independent[[nm]] +
-      ggplot2::labs(title = paste0("Dynamics (impulse response) by ", nm, " (-1 SD / median / +1 SD)"))
-  )
-}
+#### ZPOS
+```{r}
+#| eval: false
+zpos_ple_bin_cross <- plot_ribbon_multi(
+  psx_twopart_fit,
+  interaction  = "tip_zpos_auto_bin_psx_W",
+  times        = seq(0, 2, 0.05),
+  nsamp_use    = 200,
+  x_lab        = "Time (days)",
+  legend_title = "Positive Schitzotypy",
+  line_width   = 0.5,
+  bound_width  = 0.3
+)
+saveRDS(zpos_ple_bin_cross, "03_files/zpos_ple_bin_cross.rds")
+beepr::beep(8)
 ```
 
 ```{r}
-#| include: false
-saveRDS(p3_data, "data/p3_data.Rds")
+zpos_ple_bin_cross <- readRDS("03_files/zpos_ple_bin_cross.rds")
+zpos_ple_bin_cross$plot
 ```
+
+:::callout-note
+Higher Pos-Z demonstrates slower decay, while lower Pos-Z demonstrates faster decay.
+:::
+
+#### ZDIS
+```{r}
+#| eval: false
+zdis_ple_bin_cross <- plot_ribbon_multi(
+  psx_twopart_fit,
+  interaction  = "tip_zdis_auto_bin_psx_W",
+  times        = seq(0, 4, 0.05),
+  nsamp_use    = 200,
+  x_lab        = "Time (days)",
+  legend_title = "Disorganized Schitzotypy",
+  line_width   = 0.5,
+  bound_width  = 0.3
+)
+saveRDS(zdis_ple_bin_cross, "03_files/zdis_ple_bin_cross.rds")
+beepr::beep(8)
+```
+
+```{r}
+zdis_ple_bin_cross <- readRDS("03_files/zdis_ple_bin_cross.rds")
+zdis_ple_bin_cross$plot
+```
+
+:::callout-note
+Higher Dis-Z demosntrates slower decay, while lower Dis-Z demonstrates decay comparable to median levels of Dis-Z.
+:::
+
+### Continuous Cross-level Interaction
+#### Auto-Effect
+```{r}
+summary(psx_twopart_fit)$tipreds %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("param") %>%
+  filter(grepl("auto_con_psx_W", param)) %>%
+  select(param, mean, `2.5%`, `97.5%`) %>%
+  gt::gt()
+```
+
+:::callout-note
+Three significant cross-level interactions. 
+ZPOS and ZNEG associated with faster decay, and ZDIS associated with slower decay.
+:::
+
+#### ZPOS
+```{r}
+#| eval: false
+zpos_ple_con_cross <- plot_ribbon_multi(
+  psx_twopart_fit,
+  interaction  = "tip_zpos_auto_con_psx_W",
+  times        = seq(0, 8, 0.05),
+  nsamp_use    = 200,
+  x_lab        = "Time (days)",
+  legend_title = "Positive Schitzotypy",
+  line_width   = 0.5,
+  bound_width  = 0.3
+)
+saveRDS(zpos_ple_con_cross, "03_files/zpos_ple_con_cross.rds")
+# beepr::beep(8)
+```
+
+```{r}
+zpos_ple_con_cross <- readRDS("03_files/zpos_ple_con_cross.rds")
+zpos_ple_con_cross$plot
+```
+
+:::callout-note
+Low Pos-Z demonstrates slower decay, while high Pos-Z demonstrates faster decay.
+:::
+
+
+#### ZNEG
+```{r}
+#| eval: false
+zneg_ple_con_cross <- plot_ribbon_multi(
+  psx_twopart_fit,
+  interaction  = "tip_zneg_auto_con_psx_W",
+  times        = seq(0, 5, 0.05),
+  nsamp_use    = 200,
+  x_lab        = "Time (days)",
+  legend_title = "Negative Schitzotypy",
+  line_width   = 0.5,
+  bound_width  = 0.3
+)
+saveRDS(zneg_ple_con_cross, "03_files/zneg_ple_con_cross.rds")
+beepr::beep(8)
+```
+
+```{r}
+zneg_ple_con_cross <- readRDS("03_files/zneg_ple_con_cross.rds")
+zneg_ple_con_cross$plot
+```
+
+:::callout-note
+Low Neg-Z demosntrates slower decay, while high Neg-Z demonstrates faster decay.
+:::
+
+
+#### ZDIS
+```{r}
+#| eval: false
+zdis_ple_con_cross <- plot_ribbon_multi(
+  psx_twopart_fit,
+  interaction  = "tip_zdis_auto_con_psx_W",
+  times        = seq(0, 4, 0.05),
+  nsamp_use    = 200,
+  x_lab        = "Time (days)",
+  legend_title = "Disorganized Schitzotypy",
+  line_width   = 0.5,
+  bound_width  = 0.3
+)
+saveRDS(zdis_ple_con_cross, "03_files/zdis_ple_con_cross.rds")
+beepr::beep(8)
+```
+
+```{r}
+zdis_ple_con_cross <- readRDS("03_files/zdis_ple_con_cross.rds")
+zdis_ple_con_cross$plot
+```
+
+:::callout-note
+High Dis-Z demosntrates slower decay, while low Dis-Z demonstrates faster decay.
+:::

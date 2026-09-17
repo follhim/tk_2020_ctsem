@@ -18,7 +18,8 @@ execute:
 pacman::p_load(tidyverse, ctsem)
 source("cust_funcs/lavaan_parser.R")
 source("cust_funcs/ct_plot.R")
-source("cust_funcs/plot_ppc.R")
+source("cust_funcs/ct_latex_html.R")
+source("cust_funcs/mod_plot.R")
 ```
 
 ```{r}
@@ -46,6 +47,9 @@ ctJuliaSetup(threads = 10, force = TRUE)
 ### Model Specification
 ```{r}
 na_twopart_ctsem <- "
+
+TIPRED: zpos, zneg, zdis
+
 # Measurement Model
 ## BINARY
 bin_na_B =~ esm_na_bin
@@ -55,12 +59,12 @@ bin_na_W =~ esm_na_bin
 con_na_B =~ esm_na_con
 con_na_W =~ esm_na_con
 
-# Between/Trend
-bin_na_B  ~  bin_na_B
+# Between
+bin_na_B  ~  0*bin_na_B
 bin_na_B ~~  0*bin_na_B
 bin_na_B %~% bin_na_B
 
-con_na_B  ~  con_na_B
+con_na_B  ~  0*con_na_B
 con_na_B ~~  0*con_na_B
 con_na_B %~% con_na_B
 
@@ -107,9 +111,33 @@ na_twopart_mod <- ctModel(
   TIpredNames   = c("zpos", "zneg", "zdis")
 )
 
+effect_cols <- c("zpos_effect", "zneg_effect", "zdis_effect")
+
+na_twopart_mod$pars[, effect_cols] <- FALSE
+
+bin_w_idx <- match("bin_na_W", na_twopart_syn$latentNames)
+con_w_idx <- match("con_na_W", na_twopart_syn$latentNames)
+
+target_bin_w <- na_twopart_mod$pars$matrix == "DRIFT" &
+  as.character(na_twopart_mod$pars$row) == as.character(bin_w_idx) &
+  as.character(na_twopart_mod$pars$col) == as.character(bin_w_idx)
+target_con_w <- na_twopart_mod$pars$matrix == "DRIFT" &
+  as.character(na_twopart_mod$pars$row) == as.character(con_w_idx) &
+  as.character(na_twopart_mod$pars$col) == as.character(con_w_idx)
+
+na_twopart_mod$pars[target_bin_w | target_con_w, effect_cols] <- TRUE
+
+stopifnot("indvarying" %in% names(na_twopart_mod$pars))
+na_twopart_mod$pars[target_bin_w | target_con_w, "indvarying"] <- TRUE
+
 print(na_twopart_mod$pars[na_twopart_mod$pars$matrix == "DRIFT",
-                           c("matrix", "row", "col",
-                             "zpos_effect", "zneg_effect", "zdis_effect")])
+                           c("matrix", "row", "col", "indvarying", effect_cols)])
+```
+
+### Model
+```{r}
+#| out.extra: 'class="lightbox"'
+ctModelLatexHTML(na_twopart_mod)
 ```
 
 ### Fit Model
@@ -128,39 +156,7 @@ saveRDS(na_twopart_fit, "04_files/na_twopart_fit.Rds")
 ### Evaluate Model Fit
 ```{r}
 na_twopart_fit <- readRDS("04_files/na_twopart_fit.Rds")
-summary(na_twopart_fit)
-```
-
-#### Residual Auto-Correlation
-```{r}
-#| eval: false
-acf_na_twopart_fit <- ctACFresiduals(
-  na_twopart_fit,
-  varnames = na_twopart_syn$manifestNames,
-  nboot = 10
-)
-saveRDS(acf_na_twopart_fit, "04_files/acf_na_twopart.rds")
-```
-
-```{r}
-acf_na_twopart_fit <- readRDS("04_files/acf_na_twopart.rds")
-item_manifests <- na_twopart_syn$manifestNames
-acf_na_twopart <- acf_na_twopart_fit$data
-
-diag_dt_fit <- unique(
-  acf_na_twopart[Variable %in% item_manifests,
-                 .(TimeInterval, Variable, Q50 = `Q50%`, lo = `Q2.5%`, hi = `Q97.5%`, SignificanceLevel)]
-)
-
-ggplot(diag_dt_fit, aes(x = TimeInterval, y = Q50)) +
-  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = .2) +
-  geom_line() +
-  geom_hline(aes(yintercept = SignificanceLevel), linetype = "dotted") +
-  geom_hline(aes(yintercept = -SignificanceLevel), linetype = "dotted") +
-  geom_hline(yintercept = 0, color = "grey50", linewidth = .3) +
-  facet_wrap(~ Variable, ncol = 6, scales = "free_y") +
-  labs(title = "Residual autocorrelation (Two-Part, censored magnitude)", y = "ACF", x = "Time interval (days)") +
-  theme_minimal()
+ctModelLatexHTML(na_twopart_fit)
 ```
 
 #### Posterior Predictive Check
@@ -168,24 +164,19 @@ ggplot(diag_dt_fit, aes(x = TimeInterval, y = Q50)) +
 #| eval: false
 pp_plot_na_twopart_fit <- ctPostPredPlots(na_twopart_fit)
 saveRDS(pp_plot_na_twopart_fit, "04_files/pp_plot_na_twopart_fit.Rds")
-save_postpred_plots(pp_plot_na_twopart_fit, "04_files/postpred_na_twopart")
+# save_postpred_plots(pp_plot_na_twopart_fit, "04_files/postpred_na_twopart")
 ```
 
 ```{r}
 pp_plot_na_twopart_fit <- readRDS("04_files/pp_plot_na_twopart_fit.Rds")
 
-for (panel_name in names(pp_plot_na_twopart_fit)) {
-  cat("\n---", panel_name, "---\n")
-  tryCatch(
-    print(pp_plot_na_twopart_fit[[panel_name]]),
-    error = function(e) {
-      cat("  [", panel_name, "panel failed to render:", conditionMessage(e), "]\n")
-    }
-  )
-}
+pp_plot_na_twopart_fit$Density
+pp_plot_na_twopart_fit$MeanTrajectory
+pp_plot_na_twopart_fit$LaggedCovariance_esm_na_bin
+pp_plot_na_twopart_fit$LaggedCovariance_esm_na_con
+pp_plot_na_twopart_fit$SubjectLogLik
 ```
 
-### Visual
 #### Binary
 ```{r}
 set.seed(1111)
@@ -194,7 +185,7 @@ ct_effects_plot(
   effects = c("bin_na_W>bin_na_W"),
   times = seq(0, 8, 0.01),
   ylim = c(0, 1),
-  title = "Auto-effects: Two-Part (Censored Magnitude)",
+  title = "Auto-effects: Two-Part",
   legend_labels = c("NA (occurrence) -> NA (occurrence)"),
   latentNames = na_twopart_syn$latentNames
 )
@@ -206,7 +197,7 @@ set.seed(1111)
 ct_effects_plot(
   na_twopart_fit,
   effects = c("con_na_W>con_na_W"),
-  times = seq(0, 8, 0.01),
+  times = seq(0, 1.5, 0.01),
   ylim = c(0, 1),
   title = "Auto-effects: Two-Part (Censored Magnitude)",
   legend_labels = c("NA (magnitude) -> NA (magnitude)"),
@@ -214,30 +205,85 @@ ct_effects_plot(
 )
 ```
 
-### Cross-level Interaction (+/- 1 SD)
+### Binary Cross-level Interaction
+#### Auto-Effect
 ```{r}
-tip_names <- c("zpos", "zneg", "zdis")
+summary(na_twopart_fit)$tipreds %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("param") %>%
+  filter(grepl("auto_bin_na_W", param)) %>%
+  select(param, mean, `2.5%`, `97.5%`) %>%
+  gt::gt()
+```
 
-for (nm in tip_names) {
-  tipred_plots <- ctPredictTIP(
-    na_twopart_fit,
-    tipreds    = nm,
-    doDynamics = TRUE,
-    plot       = TRUE
-  )
+:::callout-note
+No significant cross-level interactions
+:::
 
-  print(
-    tipred_plots$Process$Latent[[nm]] +
-      ggplot2::labs(title = paste0("Latent trajectories by ", nm, " (-1 SD / median / +1 SD)"))
-  )
-  print(
-    tipred_plots$Dynamics$Independent[[nm]] +
-      ggplot2::labs(title = paste0("Dynamics (impulse response) by ", nm, " (-1 SD / median / +1 SD)"))
-  )
-}
+### Continuous Cross-level Interaction
+#### Auto-Effect
+```{r}
+summary(na_twopart_fit)$tipreds %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("param") %>%
+  filter(grepl("auto_con_na_W", param)) %>%
+  select(param, mean, `2.5%`, `97.5%`) %>%
+  gt::gt()
+```
+
+:::callout-note
+Two significant cross-level interactions. 
+ZNEG was assocaited with faster decay, while ZDIS was associated with slower decay.
+:::
+
+#### ZNEG
+```{r}
+#| eval: false
+zneg_na_con_cross <- plot_ribbon_multi(
+  na_twopart_fit,
+  interaction  = "tip_zneg_auto_con_na_W",
+  times        = seq(0, .8, 0.05),
+  nsamp_use    = 200,
+  x_lab        = "Time (days)",
+  legend_title = "Negative Schitzotypy",
+  line_width   = 0.5,
+  bound_width  = 0.3
+)
+saveRDS(zneg_na_con_cross, "03_files/zneg_na_con_cross.rds")
+beepr::beep(8)
 ```
 
 ```{r}
-#| include: false
-saveRDS(p4_data, "data/p4_data.Rds")
+zneg_na_con_cross <- readRDS("03_files/zneg_na_con_cross.rds")
+zneg_na_con_cross$plot
 ```
+
+:::callout-note
+Low Neg-Z demosntrates slower decay, while high Neg-Z demonstrates faster decay.
+:::
+
+#### ZDIS
+```{r}
+#| eval: false
+zdis_na_con_cross <- plot_ribbon_multi(
+  na_twopart_fit,
+  interaction  = "tip_zdis_auto_con_na_W",
+  times        = seq(0, 1, 0.05),
+  nsamp_use    = 200,
+  x_lab        = "Time (days)",
+  legend_title = "Disorganized Schitzotypy",
+  line_width   = 0.5,
+  bound_width  = 0.3
+)
+saveRDS(zdis_na_con_cross, "03_files/zdis_na_con_cross.rds")
+beepr::beep(8)
+```
+
+```{r}
+zdis_na_con_cross <- readRDS("03_files/zdis_na_con_cross.rds")
+zdis_na_con_cross$plot
+```
+
+:::callout-note
+High Dis-Z demosntrates slower decay, while low Dis-Z demonstrates decay comparable to median decay.
+:::

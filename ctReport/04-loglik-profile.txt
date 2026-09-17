@@ -1,0 +1,71 @@
+Log-probability slices through each raw parameter, one at a time,
+with the others held at the estimate.
+
+se_report  the standard error the summary reports (all else unknown).
+se_slice   the standard error this parameter's own curvature implies
+           (all else fixed). The slice grid is in these units.
+ridge      se_report / se_slice. Above 3, most of the reported
+           uncertainty comes from correlation with other parameters.
+drop_lo    fall in log probability 2 se_slice below the estimate; a
+drop_hi    quadratic surface gives 2 on both sides.
+peak       where the slice actually peaks, in se_slice.
+
+Flags: off-peak (the optimizer is not at the maximum), non-quadratic
+(the surface is not the shape the standard error assumes), asymmetric
+(so a symmetric interval is the wrong shape), ridged (see above).
+
+                             parameter estimate se_report se_slice ridge drop_lo drop_hi peak                     flag
+                         T0m_bin_psx_B  -0.2138    0.0296   0.0154  1.92    1.91    2.01    0                         
+                         T0m_con_psx_B  -0.3265    0.5760   0.0220 26.13    2.01    1.95    0                   ridged
+                        diff_bin_psx_W  -0.5453    0.3022   0.0508  5.95    1.36    1.98    0                   ridged
+                        diff_con_psx_W  -0.7095    0.3105   0.0255 12.17    1.93    2.07    0                   ridged
+                       mvaresm_psx_con  -0.0933    0.0409   0.0221  1.85    2.00    1.98    0                         
+                       T0var_bin_psx_W  -0.7434    0.3635   0.3288  1.11    0.74    5.59    0 non-quadratic,asymmetric
+                       T0var_con_psx_W  -0.3189    0.4153   0.3431  1.21    0.80    2.92    0 non-quadratic,asymmetric
+                        auto_bin_psx_W  -0.5653    0.7274   0.1071  6.79    1.19    1.97    0                   ridged
+                        auto_con_psx_W   0.8863    0.5870   0.0486 12.09    1.90    2.10    0                   ridged
+                        mm_esm_psx_con   0.5191    0.5619   0.0216 25.99    2.00    1.95    0                   ridged
+                   popsd_T0m_bin_psx_B  -0.0441    0.0554   0.0256  2.16    1.81    1.86    0                         
+                   popsd_T0m_con_psx_B   0.1993    0.0724   0.0234  3.09    2.08    1.85    0                   ridged
+                  popsd_auto_bin_psx_W   0.0733    0.2385   0.1682  1.42    1.55    3.64    0 non-quadratic,asymmetric
+                  popsd_auto_con_psx_W   0.4251    0.0842   0.0485  1.74    1.89    2.06    0                         
+                  popsd_mm_esm_psx_con   0.2966    0.6972   0.1010  6.90    1.41    2.79    0        asymmetric,ridged
+   rawcor_T0m_con_psx_B__T0m_bin_psx_B   1.4598    0.2889   0.0931  3.10    1.88    2.08    0                   ridged
+  rawcor_auto_bin_psx_W__T0m_bin_psx_B  -0.5831    0.4893   0.1497  3.27    1.83    2.19    0                   ridged
+  rawcor_auto_con_psx_W__T0m_bin_psx_B  -1.0795    0.3317   0.0782  4.24    1.93    2.00    0                   ridged
+  rawcor_mm_esm_psx_con__T0m_bin_psx_B  -0.1190    0.1778   0.0352  5.04    1.97    1.97    0                   ridged
+  rawcor_auto_bin_psx_W__T0m_con_psx_B  -0.4071    0.4333   0.1494  2.90    1.80    2.12    0                         
+  rawcor_auto_con_psx_W__T0m_con_psx_B   1.4762    0.2838   0.0796  3.57    2.02    1.95    0                   ridged
+  rawcor_mm_esm_psx_con__T0m_con_psx_B  -0.1419    0.2016   0.0341  5.91    2.08    1.85    0                   ridged
+ rawcor_auto_con_psx_W__auto_bin_psx_W   0.9180    0.4641   0.2147  2.16    2.26    1.72    0                         
+ rawcor_mm_esm_psx_con__auto_bin_psx_W  -0.3373    0.4098   0.0766  5.35    1.90    2.06    0                   ridged
+ rawcor_mm_esm_psx_con__auto_con_psx_W  -0.0785    0.1989   0.0512  3.89    2.10    1.90    0                   ridged
+   rawtipredeffect_auto_bin_psx_W_zpos   0.5056    0.1534   0.0625  2.46    0.81    2.44    0 non-quadratic,asymmetric
+   rawtipredeffect_auto_con_psx_W_zpos  -0.1226    0.0582   0.0467  1.25    1.81    2.18    0                         
+   rawtipredeffect_auto_bin_psx_W_zneg  -0.3192    0.1888   0.1504  1.26    1.51    1.44    0                         
+   rawtipredeffect_auto_con_psx_W_zneg  -0.2407    0.0648   0.0486  1.33    1.99    1.99    0                         
+   rawtipredeffect_auto_bin_psx_W_zdis   0.3001    0.1194   0.0638  1.87    1.37    1.83    0                         
+   rawtipredeffect_auto_con_psx_W_zdis   0.3323    0.0589   0.0326  1.80    1.80    2.15    0                         
+
+Flagged:
+                             parameter                     flag
+                         T0m_con_psx_B                   ridged
+                        diff_bin_psx_W                   ridged
+                        diff_con_psx_W                   ridged
+                       T0var_bin_psx_W non-quadratic,asymmetric
+                       T0var_con_psx_W non-quadratic,asymmetric
+                        auto_bin_psx_W                   ridged
+                        auto_con_psx_W                   ridged
+                        mm_esm_psx_con                   ridged
+                   popsd_T0m_con_psx_B                   ridged
+                  popsd_auto_bin_psx_W non-quadratic,asymmetric
+                  popsd_mm_esm_psx_con        asymmetric,ridged
+   rawcor_T0m_con_psx_B__T0m_bin_psx_B                   ridged
+  rawcor_auto_bin_psx_W__T0m_bin_psx_B                   ridged
+  rawcor_auto_con_psx_W__T0m_bin_psx_B                   ridged
+  rawcor_mm_esm_psx_con__T0m_bin_psx_B                   ridged
+  rawcor_auto_con_psx_W__T0m_con_psx_B                   ridged
+  rawcor_mm_esm_psx_con__T0m_con_psx_B                   ridged
+ rawcor_mm_esm_psx_con__auto_bin_psx_W                   ridged
+ rawcor_mm_esm_psx_con__auto_con_psx_W                   ridged
+   rawtipredeffect_auto_bin_psx_W_zpos non-quadratic,asymmetric
