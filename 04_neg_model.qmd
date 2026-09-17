@@ -19,6 +19,7 @@ pacman::p_load(tidyverse, ctsem)
 source("cust_funcs/lavaan_parser.R")
 source("cust_funcs/ct_plot.R")
 source("cust_funcs/ct_latex_html.R")
+source("cust_funcs/ct_halflife.R")
 source("cust_funcs/mod_plot.R")
 ```
 
@@ -176,6 +177,16 @@ pp_plot_na_twopart_fit$LaggedCovariance_esm_na_bin
 pp_plot_na_twopart_fit$LaggedCovariance_esm_na_con
 pp_plot_na_twopart_fit$SubjectLogLik
 ```
+
+### Visual
+```{r}
+na_twopart_halflife <- ct_halflife(na_twopart_fit, na_twopart_syn$latentNames)
+na_twopart_halflife %>% gt::gt()
+```
+
+:::callout-note
+Half-life = time for a deviation from equilibrium to decay to half its size: `log(2) / -drift`, in days and hours (only defined when drift < 0). Occurrence (`bin_na_W`) decays with a half-life of about `r round(na_twopart_halflife$halflife_hours[na_twopart_halflife$latent == "bin_na_W"], 2)` hours, versus about `r round(na_twopart_halflife$halflife_days[na_twopart_halflife$latent == "con_na_W"], 2)` days for magnitude (`con_na_W`).
+:::
 
 #### Binary
 ```{r}

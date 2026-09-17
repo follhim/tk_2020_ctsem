@@ -19,6 +19,7 @@ pacman::p_load(tidyverse, ctsem)
 source("cust_funcs/lavaan_parser.R")
 source("cust_funcs/ct_plot.R")
 source("cust_funcs/ct_latex_html.R")
+source("cust_funcs/ct_halflife.R")
 source("cust_funcs/mod_plot.R")
 ```
 
@@ -184,6 +185,15 @@ pp_plot_neg3_twopart_fit$SubjectLogLik
 ```
 
 ### Visual
+```{r}
+neg3_twopart_halflife <- ct_halflife(neg3_twopart_fit, neg3_twopart_syn$latentNames)
+neg3_twopart_halflife %>% gt::gt()
+```
+
+:::callout-note
+Half-life = time for a deviation from equilibrium to decay to half its size: `log(2) / -drift`, in days and hours (only defined when drift < 0). Occurrence (`bin_neg3_W`) decays with a half-life of about `r round(neg3_twopart_halflife$halflife_hours[neg3_twopart_halflife$latent == "bin_neg3_W"], 2)` hours, versus about `r round(neg3_twopart_halflife$halflife_days[neg3_twopart_halflife$latent == "con_neg3_W"], 2)` days for magnitude (`con_neg3_W`).
+:::
+
 #### Binary
 ```{r}
 set.seed(1111)

@@ -20,6 +20,7 @@ pacman::p_load(tidyverse, ctsem)
 source("cust_funcs/lavaan_parser.R")
 source("cust_funcs/ct_plot.R")
 source("cust_funcs/ct_latex_html.R")
+source("cust_funcs/ct_halflife.R")
 source("cust_funcs/mod_plot.R")
 ```
 
@@ -300,6 +301,15 @@ summary(psx_twopart_fit)$parmatrices %>%
 
 :::callout-note
 The first drift effect refers to the rate of decay for the occurence of any PSX. While the second drift effect refers to decay for the magnitude of PSX.
+:::
+
+```{r}
+psx_twopart_halflife <- ct_halflife(psx_twopart_fit, psx_twopart_syn$latentNames)
+psx_twopart_halflife %>% gt::gt()
+```
+
+:::callout-note
+Half-life = time for a deviation from equilibrium to decay to half its size: `log(2) / -drift`, in days and hours (only defined when drift < 0). Occurrence (`bin_psx_W`) decays with a half-life of about `r round(psx_twopart_halflife$halflife_hours[psx_twopart_halflife$latent == "bin_psx_W"], 2)` hours, versus about `r round(psx_twopart_halflife$halflife_days[psx_twopart_halflife$latent == "con_psx_W"], 2)` days for magnitude (`con_psx_W`) -- consistent with occurrence being volatile and magnitude being inertial, as noted below.
 :::
 
 #### Binary
