@@ -1,5 +1,0 @@
-"network","from","to","weight","directed","self"
-"temporal","bin_psx_B","bin_psx_B",0.9999990000005,TRUE,TRUE
-"temporal","bin_psx_W","bin_psx_W",0.0587360962123181,TRUE,TRUE
-"temporal","con_psx_B","con_psx_B",0.9999990000005,TRUE,TRUE
-"temporal","con_psx_W","con_psx_W",0.747312201264285,TRUE,TRUE

@@ -10,3 +10,10 @@
 /books/
 **/postpred_*/
 *.Rds
+/ctReport/
+/latex_eq/
+/*_files/
+**/figure-pdf/
+*_eq.pdf
+*_eq.png
+*_eq.tex
