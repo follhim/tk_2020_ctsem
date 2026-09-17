@@ -24,7 +24,7 @@
     "href": "index.html#how-does-this-website-work",
     "title": "kwapil_2020",
     "section": "How does this website work?",
-    "text": "How does this website work?\n\nThis data cleaning and analysis is performed locally on a laptop.\nEach phase is separated by its own R script file (.qmd file)\nThus, each R script chapter reflects the actual underlying code used to clean and analyze data.\n\n\nThis means that you can also directly suggest edits or corrections online (see section below) which will be reflected in the data cleaning workflow.\n\n\nEverytime the R code is changed or updated, GitHub will track and contain a comment (user must provide) that denotes what changes were made.",
+    "text": "How does this website work?\n\nThis data cleaning and analysis is performed locally on a laptop.\nEach phase is separated by its own R script file (.qmd file)\nThus, each R script chapter reflects the actual underlying code used to clean and analyze data.",
     "crumbs": [
       "Home"
     ]

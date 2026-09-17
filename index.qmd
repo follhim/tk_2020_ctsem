@@ -8,7 +8,7 @@ This website documents the data preparation and analysis for XXXX.
 
 ## How to navigate this website?
 
-1.  To see the raw code files see here.
+1.  To see the raw code files see [here.](https://github.com/follhim/tk_2020_ctsem)
 2.  To view rendered code, simply navigate a chapter on the left panel of this website.
 
 ## How does this website work?
@@ -16,7 +16,3 @@ This website documents the data preparation and analysis for XXXX.
 1.  This data cleaning and analysis is performed locally on a laptop.
 2.  Each phase is separated by its own R script file (`.qmd` file)
 3.  Thus, each R script *chapter* reflects the actual underlying code used to clean and analyze data. 
-
-> This means that you can also directly suggest edits or corrections **online** (see section below) which will be reflected in the data cleaning workflow.
-
-4.  Everytime the R code is changed or updated, GitHub will track and contain a comment (user must provide) that denotes what changes were made. 
