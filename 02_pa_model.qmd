@@ -4,6 +4,7 @@ format:
   html:
     toc: true
     toc-depth: 6
+    lightbox: auto   # click any figure to enlarge / zoom
 code-line-numbers: true
 code-annotations: true
 editor_options: 
@@ -20,200 +21,548 @@ source("cust_funcs/lavaan_parser.R")
 source("cust_funcs/ct_plot.R")
 source("cust_funcs/ct_latex_html.R")
 source("cust_funcs/mod_plot.R")
+source("cust_funcs/ct_dpars_plot.R")
+source("cust_funcs/ct_mod_grid.R")
+source("cust_funcs/ct_halflife.R")
+source("cust_funcs/ct_sig_table.R")
 ```
 
 ```{r}
 #| include: false
-p2_data <- readRDS("data/p1_data.Rds")
+p2_data <- readRDS("data/p1_data.Rds") %>%
+  mutate(esm24_ord = as.numeric(esm24))   # raw 1-7 codes for the ordinal esm24 model (never scaled)
 p2_data %>% 
   group_by(id) %>% 
   filter(any(duplicated(time_day)) | any(diff(time_day) <= 0)) %>% 
   distinct(id)
 ```
 
-## Observed Model
 ### Standardize Variables
 ```{r}
 p2_data <- p2_data %>%
-  mutate(across(c(esm_pa, zpos, zneg, zdis), scale))
+  mutate(across(c(esm_pa, zpos, zneg, zdis, esm24, esm25), scale))
 
 p2_data %>%
   select(esm_pa, zpos, zneg, zdis) %>%
   psych::describe()
 ```
 
+## Positive Affect (Auto-Effect + Trend)
+
 ### Model Specification
 ```{r}
-pos_ctsem <- "
-# Cross-level interaction declarations -- which TIpreds exist, and (inline
-# below) which DRIFT parameter(s) each one is allowed to moderate. Only
-# posaff_W (the within-person factor) gets TIpred moderation here --
-# posaff_B (the between-person factor) is left unrestricted/untouched, same
-# as before.
-TIPRED: zpos, zneg, zdis
+# Per-model data: one row per id x time_day (no zero intervals); drop beeps
+# where every outcome is missing.
+pa_trend_data <- p2_data %>%
+  group_by(id) %>% filter(!duplicated(time_day)) %>% ungroup() %>%
+  filter(!(is.na(esm_pa))) %>%
+  mutate(across(c(esm_pa, zpos, zneg, zdis), as.numeric)) %>%
+  as.data.frame()
 
-# Measurement Model
-posaff_B =~ esm_pa
-posaff_W =~ esm_pa
+pa_trend_mod <- ctModel(
+  type = "ct", id = "id", time = "time_day",
+  manifestNames = c("esm_pa"),
+  latentNames   = c("pa", "pa_trend"),
+  TIpredNames   = c("zpos", "zneg", "zdis"),
+  manifesttype  = c(0),   # 0 continuous, 1 binary, 4 censored
+  censormin     = c(-Inf),
+  censormax     = c(Inf),
+  # each observed variable = dynamic process + trend factor
+  LAMBDA = cbind(diag(1), diag(1)),
+  # DRIFT -- dynamic auto-effects + slow trend drifts
+  DRIFT = matrix(c(
+    "pa_pa"         , 0,
+    0               , "drift_pa_trend"),
+    2, 2, byrow = TRUE),
+  # DIFFUSION -- system noise on the dynamic process(es) only
+  DIFFUSION = matrix(c(
+    "diff_pa", 0,
+    0        , 0),
+    2, 2, byrow = TRUE),
+  # T0VAR -- first-beep deviations; trend starts come from random T0MEANS
+  T0VAR = matrix(c(
+    "T0var_pa", 0,
+    0         , 0),
+    2, 2, byrow = TRUE),
+  T0MEANS = c(0, "T0m_pa_trend"),
+  CINT    = c(0, "cint_pa_trend"),
+  MANIFESTMEANS = 0,
+  MANIFESTVAR = matrix(c(
+    "mvar_pa"),
+    1, 1, byrow = TRUE)
+)
 
-# Between/Trend
-posaff_B  ~  0*posaff_B     
-posaff_B ~~  0*posaff_B # this is what tells model its between-person
-posaff_B %~% posaff_B     
+# Random effects = the trend factor's T0MEANS and CINT only (EAS default)
+pa_trend_mod$pars$indvarying <- pa_trend_mod$pars$param %in% c("T0m_pa_trend", "cint_pa_trend")
 
-# Within (dynamic) factor
-posaff_W  ~  posaff_W + posaff_W:zpos + posaff_W:zneg + posaff_W:zdis
-posaff_W ~~  posaff_W       
-posaff_W %~% posaff_W       
+# TIpreds moderate the dynamic auto-effect(s) only
+eff <- paste0(c("zpos", "zneg", "zdis"), "_effect")
+pa_trend_mod$pars[, eff] <- FALSE
+pa_trend_mod$pars[pa_trend_mod$pars$matrix == "DRIFT" &
+               pa_trend_mod$pars$param %in% c("pa_pa"), eff] <- TRUE
 
-# CINT
-posaff_B ~ 0
-"
+pa_trend_mod$pars[pa_trend_mod$pars$indvarying | rowSums(pa_trend_mod$pars[, eff]) > 0,
+               c("matrix", "row", "col", "param", "indvarying", eff)]
 
-pos_ctsem_syn <- ct_lavaan(pos_ctsem, data = p2_data, id = "id", time = "time_day")
-pos_ctsem_mod <- pos_ctsem_syn$mod
-ctModelLatexHTML(pos_ctsem_mod)
+ctModelLatexHTML(pa_trend_mod)
 ```
 
 ### Fit Model
 ```{r}
 #| eval: false
-pos_ctsem_fit <- ctFit(
-  datalong = p2_data, 
-  ctstanmodel = pos_ctsem_mod,
+ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine (cached per model shape)
+pa_trend_fit <- ctFit(
+  datalong = pa_trend_data,
+  model    = pa_trend_mod,
   backend  = "julia",
   optimcontrol = list(maxiter = 10000),
   cores = 10, plot = FALSE, priors = TRUE
 )
-saveRDS(pos_ctsem_fit, "02_files/pos_ctsem_fit.Rds")
-
-acf_pos_ctsem_fit <- ctsem::ctACFresiduals(pos_ctsem_fit)
-saveRDS(acf_pos_ctsem_fit, "02_files/acf_pos_ctsem_fit.rds")
+saveRDS(pa_trend_fit, "02_files/pa_trend_fit.Rds")
 beepr::beep(8)
 ```
 
-### Evaluate Model Fit
 ```{r}
-pos_ctsem_fit <- readRDS("02_files/pos_ctsem_fit.Rds")
-summary(pos_ctsem_fit)
-ctModelLatexHTML(pos_ctsem_fit)
+pa_trend_fit <- readRDS("02_files/pa_trend_fit.Rds")
 ```
 
-#### Posterior Predictive Check
+### Posterior Predictive Check
 ```{r}
 #| eval: false
-pp_plot_pos_ctsem_fit <- ctPostPredPlots(pos_ctsem_fit)
-saveRDS(pp_plot_pos_ctsem_fit, "02_files/pp_plot_pos_ctsem_fit.rds")
+pa_trend_fit <- ctGenerateFromFit(pa_trend_fit, nsamples = 100)
+pp_pa_trend <- ctPostPredPlots(pa_trend_fit)
+saveRDS(pp_pa_trend, "02_files/pp_pa_trend.rds")
+pa_trend_fit$generated <- NULL; gc()   # free memory
 beepr::beep(8)
 ```
 
 ```{r}
-pp_plot_pos_ctsem_fit <- readRDS("02_files/pp_plot_pos_ctsem_fit.rds")
-pp_plot_pos_ctsem_fit$Density
-pp_plot_pos_ctsem_fit$MeanTrajectory
-pp_plot_pos_ctsem_fit$LaggedCovariance_esm_pa
-pp_plot_pos_ctsem_fit$SubjectLogLik
+pp_pa_trend <- readRDS("02_files/pp_pa_trend.rds")
+pp_pa_trend$Density
+pp_pa_trend$MeanTrajectory
+pp_pa_trend$LaggedCovariance_esm_pa
+pp_pa_trend$SubjectLogLik
 ```
 
-:::callout-note
-Overall, the model's expected values and observed values suggest great fit.
-:::
-
-### Results
-
-#### Auto-Effect Visual
+### Results Table
 ```{r}
+ct_sig_table(pa_trend_fit)
+```
+
+### Half-Life
+```{r}
+ct_halflife(pa_trend_fit, c("pa", "pa_trend"), pattern = NULL) %>%
+  ct_sig_gt(lower = "drift_2.5", upper = "drift_97.5")
+```
+
+### Auto-Effects
+```{r}
+#| eval: false
 set.seed(1111)
-ct_effects_plot(
-  pos_ctsem_fit,
-  effects = c(
-    "posaff_W>posaff_W"),
-  times = seq(0, 2, 0.01),
-  ylim = c(0, 1),
-  title = "Auto-effects: Positive Affect",
-  legend_labels = c(
-    "Positive Affect -> Positive Affect"),
-  latentNames = pos_ctsem_syn$latentNames   # <- add this
-)
+dp_pa_trend <- ct_dpars_plot(pa_trend_fit,
+  type     = "auto",   # auto-effects only (no cross-effects in this model)
+  exclude  = c("pa_trend"),   # dynamic process(es) only
+  times    = seq(0, 2, 0.02),
+  nsamples = 100)
+saveRDS(dp_pa_trend, "02_files/dp_pa_trend.rds")
+beepr::beep(8)
 ```
 
-:::callout-note
-You are looking at a 2 day timeframe. We can request more, but as you can see, it returns to equilibrium fairly quickly.
-:::
-
-#### Main Effects
 ```{r}
-pos_ctsem_fit <- readRDS("02_files/pos_ctsem_fit.Rds")
-summary(pos_ctsem_fit)$parmatrices %>%
-  filter(matrix == "DRIFT") %>%
-  filter(row == col)
+dp_pa_trend <- readRDS("02_files/dp_pa_trend.rds")
+dp_pa_trend$plot_auto
 ```
 
-:::callout-note
-The first parameter represents the overall between-person detrend of Positive Affect (0), which we set as a latent random intercept that capture the stable trait. 
-
-The second parameter represents the within-person dynamic return of PA to equilibrium (-3.703 [-4.976, -2.581]). What does this mean practically? This tells us how fast a process returns to equilibrium.
-
-We can actually calculate the **half-life** using the following:
-:::
-
+### Moderation
+#### TIpred Effects
 ```{r}
-days <- log(0.5)/-3.703
-days
-
-days*24
-```
-
-:::callout-note
-Interpretation: For a given deivation from a person's stable, trait-level positive affect, half of that deviation would dissipate within approximately **4.49** hours--assuming no other force intervened.
-:::
-
-### *Cross-level Interaction
-#### Auto-Effect
-```{r}
-summary(pos_ctsem_fit)$tipreds %>%
+summary(pa_trend_fit)$tipreds %>%
   as.data.frame() %>%
   tibble::rownames_to_column("param") %>%
-  filter(grepl("auto_posaff_W", param)) %>%
   select(param, mean, `2.5%`, `97.5%`) %>%
-  gt::gt()
+  ct_sig_gt(lower = "2.5%", upper = "97.5%")
 ```
 
-:::callout-note
-Similar to the interpretation above, we find one significant cross-level interactions. A bigger `negative` coefficient suggests the time invariant variable predicted **faster** decay.
-
-1.  Positive-Z was **not significant** moderator (-0.201 [-0.536, 0.155]) with the auto-effect of PA.
-2.  Greater Negative-Z was **not significant** a moderator (-0.353 [-0.732, 0.002]). 
-3.  However, Disorganized-Z was significantly associated with **slower** decay in PA (0.457 [0.110, 0.832]).
-:::
-
-#### ZDIS
+#### Moderation Plots
 ```{r}
 #| eval: false
-zdis_pa_cross <- plot_ribbon_multi(
-  pos_ctsem_fit,
-  tipred_name = "zdis",
-  times = seq(0, 1, 0.05),
-  row = 2, col = 2,
-  nsamp_use = 200,
-  x_lab = "Time (days)",
-  y_lab = "Positive Affect (Within-Person)",
-  legend_title = "Disorganized Schitzotypy",
-  line_width = 0.5,
-  bound_width = 0.3,
-  ribbon_alpha = 0.1
+set.seed(1111)
+mod_pa_trend <- ct_mod_grid(
+  pa_trend_fit,
+  latentNames = c("pa", "pa_trend"),
+  effects     = c("pa"),
+  tipreds     = c("zneg", "zdis"),
+  labels      = c(zneg = "Negative Schizotypy",
+                  zdis = "Disorganized Schizotypy"),
+  times       = seq(0, 2, 0.04),
+  nsamp_use   = 100,
+  x_lab       = "Time (days)"
 )
-saveRDS(zdis_pa_cross, "02_files/zdis_pa_cross.rds")
+saveRDS(mod_pa_trend, "02_files/mod_pa_trend.rds")
+beepr::beep(8)
 ```
 
 ```{r}
-zdis_pa_cross <- readRDS("02_files/zdis_pa_cross.rds")
-zdis_pa_cross$plot
+mod_pa_trend <- readRDS("02_files/mod_pa_trend.rds")
 ```
 
-:::callout-note
-Higher Dis-Z demonstrates slower decay, while lower Dis-Z demonstrates comparable decay to median Dis-Z.
-:::
+##### ZNEG
+```{r}
+#| fig-width: 6
+#| fig-height: 4
+patchwork::wrap_plots(lapply(mod_pa_trend$zneg, `[[`, "plot"), ncol = 1, guides = "collect")
+```
+
+##### ZDIS
+```{r}
+#| fig-width: 6
+#| fig-height: 4
+patchwork::wrap_plots(lapply(mod_pa_trend$zdis, `[[`, "plot"), ncol = 1, guides = "collect")
+```
+
+## Positive Situation (esm24)
+
+### Model Specification
+```{r}
+# Per-model data: one row per id x time_day (no zero intervals) and drop
+# beeps where both outcomes are missing (saves memory / time).
+sit_trend_data <- p2_data %>%
+  group_by(id) %>% filter(!duplicated(time_day)) %>% ungroup() %>%
+  filter(!(is.na(esm_pa) & is.na(esm24))) %>%
+  mutate(across(c(esm_pa, esm24, zpos, zneg, zdis), as.numeric)) %>%
+  as.data.frame()
+
+sit_trend_mod <- ctModel(
+  type = "ct", id = "id", time = "time_day",
+  manifestNames = c("esm_pa", "esm24"),
+  latentNames   = c("pa", "psit", "pa_trend", "psit_trend"),
+  TIpredNames   = c("zpos", "zneg", "zdis"),
+  # each observed variable = dynamic process + trend factor
+  LAMBDA = cbind(diag(2), diag(2)),
+  # DRIFT -- labels are predictor_outcome (psit_pa = psit -> pa);
+  # trend factors only have their own (slow) drift, no cross-links
+  DRIFT = matrix(c(
+    "pa_pa",      "psit_pa",      0,                0,
+    "pa_psit",    "psit_psit",    0,                0,
+    0,            0,              "drift_pa_trend", 0,
+    0,            0,              0,                "drift_psit_trend"),
+    4, 4, byrow = TRUE),
+  # DIFFUSION -- system noise on the dynamic processes only (trends are smooth)
+  DIFFUSION = matrix(c(
+    "diff_pa",      0,           0, 0,
+    "diff_pa_psit", "diff_psit", 0, 0,
+    0,              0,           0, 0,
+    0,              0,           0, 0), 4, 4, byrow = TRUE),
+  # T0VAR -- initial within-person deviations; trend starting points are
+  # captured by the random T0MEANS instead
+  T0VAR = matrix(c(
+    "T0var_pa",      0,             0, 0,
+    "T0var_pa_psit", "T0var_psit", 0, 0,
+    0,               0,             0, 0,
+    0,               0,             0, 0), 4, 4, byrow = TRUE),
+  # Trend factors: person-specific starting level (T0MEANS) and
+  # person-specific level the trend drifts toward (CINT)
+  T0MEANS = c(0, 0, "T0m_pa_trend", "T0m_psit_trend"),
+  CINT    = c(0, 0, "cint_pa_trend", "cint_psit_trend"),
+  MANIFESTMEANS = 0,
+  # MANIFESTVAR: measurement error incl. its covariance (same-beep response
+  # style / shared occasion error). Without it the shock correlation goes to
+  # ~.99 and the cross-effects compensate.
+  MANIFESTVAR = matrix(c(
+    "mvar_pa",      0,
+    "mvar_pa_psit", "mvar_psit"), 2, 2, byrow = TRUE)
+)
+
+# Random effects = the trend factors' T0MEANS and CINT only (EAS default);
+# auto-/cross-effects are fixed across people.
+sit_trend_mod$pars$indvarying <- sit_trend_mod$pars$param %in%
+  c("T0m_pa_trend", "T0m_psit_trend", "cint_pa_trend", "cint_psit_trend")
+
+# TIpreds moderate the four dynamic DRIFT cells (auto- and cross-effects);
+# not the trend drifts, trend T0MEANS/CINT, DIFFUSION or measurement part
+eff <- paste0(c("zpos", "zneg", "zdis"), "_effect")
+sit_trend_mod$pars[, eff] <- FALSE
+sit_trend_mod$pars[sit_trend_mod$pars$matrix == "DRIFT" &
+               sit_trend_mod$pars$param %in% c("pa_pa", "psit_pa", "pa_psit", "psit_psit"), eff] <- TRUE
+
+sit_trend_mod$pars[sit_trend_mod$pars$indvarying | rowSums(sit_trend_mod$pars[, eff]) > 0,
+               c("matrix", "row", "col", "param", "indvarying", eff)]
+
+ctModelLatexHTML(sit_trend_mod)
+```
+
+### Fit Model
+```{r}
+#| eval: false
+# ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine (cached per model shape)
+sit_trend_fit <- ctFit(
+  datalong = sit_trend_data,
+  model    = sit_trend_mod,
+  backend  = "julia",
+  optimcontrol = list(maxiter = 10000),
+  cores = 10, plot = FALSE, priors = TRUE
+)
+saveRDS(sit_trend_fit, "02_files/sit_trend_fit.Rds")
+
+```
+
+```{r}
+sit_trend_fit <- readRDS("02_files/sit_trend_fit.Rds")
+```
+
+### Posterior Predictive Check
+```{r}
+#| eval: false
+sit_trend_fit <- ctGenerateFromFit(sit_trend_fit, nsamples = 100)
+pp_sit_trend <- ctPostPredPlots(sit_trend_fit)
+saveRDS(pp_sit_trend, "02_files/pp_sit_trend.rds")
+beepr::beep(8)
+```
+
+```{r}
+pp_sit_trend <- readRDS("02_files/pp_sit_trend.rds")
+pp_sit_trend$Density
+pp_sit_trend$MeanTrajectory
+pp_sit_trend$LaggedCovariance_esm_pa
+pp_sit_trend$LaggedCovariance_esm24
+pp_sit_trend$SubjectLogLik
+```
+
+### Results Table
+```{r}
+ct_sig_table(sit_trend_fit)
+```
+
+### Auto- and Cross-Effects
+```{r}
+#| eval: false
+set.seed(1111)
+dp_sit_trend <- ct_dpars_plot(sit_trend_fit,
+  exclude  = c("pa_trend", "psit_trend"),   # dynamic processes only
+  times    = seq(0, 8, 0.02),
+  nsamples = 100)
+saveRDS(dp_sit_trend, "02_files/dp_sit_trend.rds")
+beepr::beep(8)
+```
+
+```{r}
+dp_sit_trend <- readRDS("02_files/dp_sit_trend.rds")
+dp_sit_trend$plot_auto
+dp_sit_trend$plot_cross
+dp_sit_trend$peaks %>%
+  dplyr::select(Effect, `Time interval`, median, lower, upper) %>%
+  ct_sig_gt(lower = "lower", upper = "upper")
+```
+
+### Moderation
+#### TIpred Effects
+```{r}
+summary(sit_trend_fit)$tipreds %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("param") %>%
+  select(param, mean, `2.5%`, `97.5%`) %>%
+  ct_sig_gt(lower = "2.5%", upper = "97.5%")
+```
+
+#### Moderation Plots
+```{r}
+#| eval: false
+set.seed(1111)
+mod_sit_trend <- ct_mod_grid(
+  sit_trend_fit,
+  latentNames = c("pa", "psit", "pa_trend", "psit_trend"),
+  effects     = c("pa", "psit>pa", "pa>psit", "psit"),
+  tipreds     = c("zpos", "zneg", "zdis"),
+  labels      = c(zpos = "Positive Schizotypy", zneg = "Negative Schizotypy",
+                  zdis = "Disorganized Schizotypy"),
+  times       = seq(0, 2, 0.04),
+  nsamp_use   = 100,
+  x_lab       = "Time (days)"
+)
+saveRDS(mod_sit_trend, "02_files/mod_sit_trend.rds")
+beepr::beep(8)
+```
+
+##### ZPOS
+```{r}
+#| fig-width: 12
+#| fig-height: 8
+mod_sit_trend <- readRDS("02_files/mod_sit_trend.rds")
+patchwork::wrap_plots(lapply(mod_sit_trend$zpos, `[[`, "plot"), ncol = 2, guides = "collect")
+```
+
+## Stressful Situation (esm25)
+
+### Model Specification
+```{r}
+# Per-model data: one row per id x time_day (no zero intervals) and drop
+# beeps where both outcomes are missing (saves memory / time).
+str_trend_data <- p2_data %>%
+  group_by(id) %>% filter(!duplicated(time_day)) %>% ungroup() %>%
+  filter(!(is.na(esm_pa) & is.na(esm25))) %>%
+  mutate(across(c(esm_pa, esm25, zpos, zneg, zdis), as.numeric)) %>%
+  as.data.frame()
+
+str_trend_mod <- ctModel(
+  type = "ct", id = "id", time = "time_day",
+  manifestNames = c("esm_pa", "esm25"),
+  latentNames   = c("pa", "ssit", "pa_trend", "ssit_trend"),
+  TIpredNames   = c("zpos", "zneg", "zdis"),
+  # each observed variable = dynamic process + trend factor
+  LAMBDA = cbind(diag(2), diag(2)),
+  # DRIFT -- labels are predictor_outcome (ssit_pa = ssit -> pa);
+  # trend factors only have their own (slow) drift, no cross-links
+  DRIFT = matrix(c(
+    "pa_pa",      "ssit_pa",      0,                0,
+    "pa_ssit",    "ssit_ssit",    0,                0,
+    0,            0,              "drift_pa_trend", 0,
+    0,            0,              0,                "drift_ssit_trend"),
+    4, 4, byrow = TRUE),
+  # DIFFUSION -- system noise on the dynamic processes only (trends are smooth)
+  DIFFUSION = matrix(c(
+    "diff_pa",      0,           0, 0,
+    "diff_pa_ssit", "diff_ssit", 0, 0,
+    0,              0,           0, 0,
+    0,              0,           0, 0), 4, 4, byrow = TRUE),
+  # T0VAR -- initial within-person deviations; trend starting points are
+  # captured by the random T0MEANS instead
+  T0VAR = matrix(c(
+    "T0var_pa",      0,             0, 0,
+    "T0var_pa_ssit", "T0var_ssit", 0, 0,
+    0,               0,             0, 0,
+    0,               0,             0, 0), 4, 4, byrow = TRUE),
+  # Trend factors: person-specific starting level (T0MEANS) and
+  # person-specific level the trend drifts toward (CINT)
+  T0MEANS = c(0, 0, "T0m_pa_trend", "T0m_ssit_trend"),
+  CINT    = c(0, 0, "cint_pa_trend", "cint_ssit_trend"),
+  MANIFESTMEANS = 0,
+  # MANIFESTVAR: measurement error incl. its covariance (same-beep response
+  # style / shared occasion error). Without it the shock correlation goes to
+  # ~.99 and the cross-effects compensate.
+  MANIFESTVAR = matrix(c(
+    "mvar_pa",      0,
+    "mvar_pa_ssit", "mvar_ssit"), 2, 2, byrow = TRUE)
+)
+
+# Random effects = the trend factors' T0MEANS and CINT only (EAS default);
+# auto-/cross-effects are fixed across people.
+str_trend_mod$pars$indvarying <- str_trend_mod$pars$param %in%
+  c("T0m_pa_trend", "T0m_ssit_trend", "cint_pa_trend", "cint_ssit_trend")
+
+# TIpreds moderate the four dynamic DRIFT cells (auto- and cross-effects);
+# not the trend drifts, trend T0MEANS/CINT, DIFFUSION or measurement part
+eff <- paste0(c("zpos", "zneg", "zdis"), "_effect")
+str_trend_mod$pars[, eff] <- FALSE
+str_trend_mod$pars[str_trend_mod$pars$matrix == "DRIFT" &
+               str_trend_mod$pars$param %in% c("pa_pa", "ssit_pa", "pa_ssit", "ssit_ssit"), eff] <- TRUE
+
+str_trend_mod$pars[str_trend_mod$pars$indvarying | rowSums(str_trend_mod$pars[, eff]) > 0,
+               c("matrix", "row", "col", "param", "indvarying", eff)]
+
+ctModelLatexHTML(str_trend_mod)
+```
+
+### Fit Model
+```{r}
+#| eval: false
+# ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine (cached per model shape)
+str_trend_fit <- ctFit(
+  datalong = str_trend_data,
+  model    = str_trend_mod,
+  backend  = "julia",
+  optimcontrol = list(maxiter = 10000),
+  cores = 10, plot = FALSE, priors = TRUE
+)
+saveRDS(str_trend_fit, "02_files/str_trend_fit.Rds")
+
+```
+
+```{r}
+str_trend_fit <- readRDS("02_files/str_trend_fit.Rds")
+```
+
+### Posterior Predictive Check
+```{r}
+#| eval: false
+str_trend_fit <- ctGenerateFromFit(str_trend_fit, nsamples = 100)
+pp_str_trend <- ctPostPredPlots(str_trend_fit)
+saveRDS(pp_str_trend, "02_files/pp_str_trend.rds")
+str_trend_fit$generated <- NULL; gc()   # free memory
+beepr::beep(8)
+```
+
+```{r}
+pp_str_trend <- readRDS("02_files/pp_str_trend.rds")
+pp_str_trend$Density
+pp_str_trend$MeanTrajectory
+pp_str_trend$LaggedCovariance_esm_pa
+pp_str_trend$LaggedCovariance_esm25
+pp_str_trend$SubjectLogLik
+```
+
+### Results Table
+```{r}
+ct_sig_table(str_trend_fit)
+```
+
+### Auto- and Cross-Effects
+```{r}
+#| eval: false
+set.seed(1111)
+dp_str_trend <- ct_dpars_plot(str_trend_fit,
+  exclude  = c("pa_trend", "ssit_trend"),   # dynamic processes only
+  times    = seq(0, 2, 0.02),
+  nsamples = 100)
+saveRDS(dp_str_trend, "02_files/dp_str_trend.rds")
+beepr::beep(8)
+```
+
+```{r}
+dp_str_trend <- readRDS("02_files/dp_str_trend.rds")
+dp_str_trend$plot_auto
+dp_str_trend$plot_cross
+dp_str_trend$peaks %>%
+  dplyr::select(Effect, `Time interval`, median, lower, upper) %>%
+  ct_sig_gt(lower = "lower", upper = "upper")
+```
+
+### Moderation
+#### TIpred Effects
+```{r}
+summary(str_trend_fit)$tipreds %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("param") %>%
+  select(param, mean, `2.5%`, `97.5%`) %>%
+  ct_sig_gt(lower = "2.5%", upper = "97.5%")
+```
+
+#### Moderation Plots
+```{r}
+#| eval: false
+set.seed(1111)
+mod_str_trend <- ct_mod_grid(
+  str_trend_fit,
+  latentNames = c("ssit"),
+  effects     = c("ssit"),
+  tipreds     = c("zdis"),
+  labels      = c(zdis = "Disorganized Schizotypy"),
+  times       = seq(0, 2, 0.01),
+  nsamp_use   = 100,
+  x_lab       = "Time (days)"
+)
+saveRDS(mod_str_trend, "02_files/mod_str_trend.rds")
+beepr::beep(8)
+```
+```{r}
+mod_str_trend <- readRDS("02_files/mod_str_trend.rds")
+```
+
+##### ZDIS
+```{r}
+#| fig-width: 12
+#| fig-height: 8
+patchwork::wrap_plots(lapply(mod_str_trend$zdis, `[[`, "plot"), ncol = 2, guides = "collect")
+```
 
 ```{r}
 #| include: false

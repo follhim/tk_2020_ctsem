@@ -22,7 +22,17 @@ ct_lavaan <- function(spec, latentNames = NULL, manifestNames = NULL, data = NUL
   # <specific cells>, force indvarying back on" block that used to be
   # copy-pasted into every .qmd model chunk.
   tipred_names     <- character(0)
-  crosslevel_lines <- list()   # list(list(latent=, tipred=), ...)
+  crosslevel_lines <- list()   # list(list(latent=, tipred=, from=), ...)
+
+  # ---- TDPRED: ... / time-dependent predictor effects ----
+  # TDPRED: declares time-dependent predictor names (ctModel()'s
+  # TDpredNames/n.TDpred). Range tokens expand like the TYPE: keywords
+  # ("beep2-beep8"). Any regression line whose RHS names a declared TDpred,
+  # e.g. "pa ~ beep2 + beep3", fills TDPREDEFFECT[pa, beep2] (default label
+  # "b_<latent>_<tdpred>", or "label*beep2") instead of a DRIFT cell. Every
+  # TDPREDEFFECT cell not written this way is fixed to 0.
+  tdpred_names <- character(0)
+  tdpred_lines <- list()       # list(list(lhs=, terms=), ...)
 
   # ---- manifest type keywords: BINARY:/ORDINAL:/COUNT:/CENSOR:/CONTINUOUS: ----
   # manifesttype codes per ctsem (juliaFit branch): 0 continuous, 1 binary,
@@ -100,8 +110,23 @@ ct_lavaan <- function(spec, latentNames = NULL, manifestNames = NULL, data = NUL
     paste0(prefix, formatC(lo:hi, width = width, flag = "0"))
   }
 
+  # ---- PASS 0: collect TDPRED: names first, so PASS 1 can route
+  #      regression terms naming a TDpred into TDPREDEFFECT regardless of
+  #      where the TDPRED: line sits in the spec ----
+  for (line in raw_lines) {
+    td_match <- regmatches(line, regexec("^TDPRED\\s*:(.*)$", line, ignore.case = TRUE))[[1]]
+    if (length(td_match) == 2) {
+      toks <- trimws(strsplit(td_match[2], "[+,]")[[1]])
+      toks <- toks[nzchar(toks)]
+      tdpred_names <- c(tdpred_names, unlist(lapply(toks, expand_range_token)))
+    }
+  }
+  tdpred_names <- unique(tdpred_names)
+
   # ---- PASS 1: classify every line ----
   for (line in raw_lines) {
+
+    if (grepl("^TDPRED\\s*:", line, ignore.case = TRUE)) next  # handled in PASS 0
 
     tip_match <- regmatches(line, regexec("^TIPRED\\s*:(.*)$", line, ignore.case = TRUE))[[1]]
     if (length(tip_match) == 2) {
@@ -126,8 +151,8 @@ ct_lavaan <- function(spec, latentNames = NULL, manifestNames = NULL, data = NUL
         # ORDINAL: (categories=) only.
         bmatch <- regmatches(raw_tok, regexec("^(.*)\\[(.*)\\]\\s*$", raw_tok))[[1]]
         if (length(bmatch) == 3) {
-          tok <- trimws(bmatch[1])
-          bound_str <- bmatch[2]
+          tok <- trimws(bmatch[2])
+          bound_str <- bmatch[3]
         }
 
         expanded <- expand_range_token(tok)
@@ -178,7 +203,7 @@ ct_lavaan <- function(spec, latentNames = NULL, manifestNames = NULL, data = NUL
           stop("Could not parse cross-level interaction term '", term,
                "' -- expected 'latent:tipred'.")
         crosslevel_lines[[length(crosslevel_lines)+1]] <-
-          list(latent = pieces[1], tipred = pieces[2])
+          list(latent = pieces[1], tipred = pieces[2], from = pieces[1])
       }
       next
     }
@@ -249,9 +274,16 @@ ct_lavaan <- function(spec, latentNames = NULL, manifestNames = NULL, data = NUL
 
       if (nzchar(plain_rhs)) {
         terms <- parse_rhs(plain_rhs, function(v, i)
-          if (v == lhs) paste0("auto_", lhs) else paste0("dr_", lhs, "_", v))
-        for (t in terms) add_latent(t$var)
-        struct_lines[[length(struct_lines)+1]] <- list(lhs = lhs, terms = terms)
+          if (v %in% tdpred_names) paste0("b_", lhs, "_", v)
+          else if (v == lhs) paste0("auto_", lhs) else paste0("dr_", lhs, "_", v))
+        is_td    <- vapply(terms, function(t) t$var %in% tdpred_names, logical(1))
+        td_terms <- terms[is_td]
+        dr_terms <- terms[!is_td]
+        for (t in dr_terms) add_latent(t$var)
+        if (length(dr_terms))
+          struct_lines[[length(struct_lines)+1]] <- list(lhs = lhs, terms = dr_terms)
+        if (length(td_terms))
+          tdpred_lines[[length(tdpred_lines)+1]] <- list(lhs = lhs, terms = td_terms)
       }
 
       for (it in inter_terms) {
@@ -259,13 +291,11 @@ ct_lavaan <- function(spec, latentNames = NULL, manifestNames = NULL, data = NUL
         if (length(pieces) != 2 || !nzchar(pieces[1]) || !nzchar(pieces[2]))
           stop("Could not parse cross-level interaction term '", it, "' on line '",
                line, "' -- expected '<latent>:<tipred>'.")
-        if (pieces[1] != lhs)
-          stop("Cross-level interaction '", it, "' on line '", line, "' -- inline ",
-               "interaction terms must target this line's own latent ('", lhs,
-               "'); cross-latent interaction targets aren't supported yet. Use ",
-               "'", lhs, ":", pieces[2], "' instead.")
+        # "<from>:<tipred>" on the "<lhs> ~ ..." line moderates DRIFT[lhs, from]
+        # -- the effect of <from> on <lhs>. When <from> == <lhs> this is the
+        # autoregression (original behavior); otherwise it is the cross-effect.
         crosslevel_lines[[length(crosslevel_lines)+1]] <-
-          list(latent = pieces[1], tipred = pieces[2])
+          list(latent = lhs, tipred = pieces[2], from = pieces[1])
       }
     }
   }
@@ -278,6 +308,11 @@ ct_lavaan <- function(spec, latentNames = NULL, manifestNames = NULL, data = NUL
   # ---- validate cross-level interaction lines now that latentNames/
   #      TIpredNames are known ----
   for (cl in crosslevel_lines) {
+    if (!cl$from %in% latentNames) {
+      stop("Cross-level interaction '", cl$from, ":", cl$tipred, "' (on the '",
+           cl$latent, " ~' line) references a latent not seen elsewhere in spec: '",
+           cl$from, "'.")
+    }
     if (!cl$latent %in% latentNames) {
       stop("Cross-level interaction '", cl$latent, ":", cl$tipred, "' references ",
            "a latent not seen elsewhere in spec: '", cl$latent, "' -- define it ",
@@ -347,6 +382,27 @@ ct_lavaan <- function(spec, latentNames = NULL, manifestNames = NULL, data = NUL
   DRIFT <- matrix("0", length(latentNames), length(latentNames),
                   dimnames = list(latentNames, latentNames))
   for (b in struct_lines) for (t in b$terms) DRIFT[b$lhs, t$var] <- t$label
+
+  for (cl in crosslevel_lines) {
+    if (DRIFT[cl$latent, cl$from] == "0")
+      stop("Cross-level interaction '", cl$from, ":", cl$tipred, "' moderates DRIFT[",
+           cl$latent, ", ", cl$from, "], but that cell is fixed to 0 -- add '",
+           cl$from, "' to the '", cl$latent, " ~ ...' regression first.")
+  }
+
+  TDPREDEFFECT <- NULL
+  if (length(tdpred_names) > 0) {
+    TDPREDEFFECT <- matrix("0", length(latentNames), length(tdpred_names),
+                           dimnames = list(latentNames, tdpred_names))
+    for (b in tdpred_lines) for (t in b$terms) TDPREDEFFECT[b$lhs, t$var] <- t$label
+    if (!is.null(data)) {
+      miss <- setdiff(tdpred_names, names(data))
+      if (length(miss)) stop("TDPRED: variable(s) not found in `data`: ",
+                             paste(miss, collapse = ", "))
+    }
+  } else if (length(tdpred_lines) > 0) {
+    stop("Regression terms reference TDpreds but no TDPRED: line was given.")
+  }
 
   DIFFUSION <- matrix("0", length(latentNames), length(latentNames),
                       dimnames = list(latentNames, latentNames))
@@ -425,7 +481,16 @@ ct_lavaan <- function(spec, latentNames = NULL, manifestNames = NULL, data = NUL
     if (!is.null(b) && !is.null(b$categories)) {
       ncategories[v] <- as.integer(b$categories)
     } else if (!is.null(data)) {
-      ncategories[v] <- length(unique(stats::na.omit(data[[v]])))
+      obs <- stats::na.omit(data[[v]])
+      if (min(obs) != 1) {
+        stop("ORDINAL: '", v, "' observed codes start at ", min(obs),
+             ", not 1 -- ctsem (julia backend) expects ordinal codes to be ",
+             "consecutive integers starting at 1. Recode before passing to ",
+             "ct_lavaan(), or supply 'ORDINAL: ", v, "[categories=<n>]' explicitly.")
+      }
+      # codes span 1..ncategories; use the code range rather than counting
+      # distinct values, which undercounts if an intermediate code is unobserved.
+      ncategories[v] <- as.integer(max(obs))
     } else {
       stop("ORDINAL: '", v, "' has no explicit '[categories=...]' count and no ",
            "`data=` was passed to ct_lavaan() to auto-compute it from the observed ",
@@ -465,6 +530,12 @@ ct_lavaan <- function(spec, latentNames = NULL, manifestNames = NULL, data = NUL
     model_args$TIpredNames <- TIpredNames
   }
 
+  if (length(tdpred_names) > 0) {
+    model_args$n.TDpred     <- length(tdpred_names)
+    model_args$TDpredNames  <- tdpred_names
+    model_args$TDPREDEFFECT <- TDPREDEFFECT
+  }
+
   mod <- do.call(ctsem::ctModel, model_args)
 
   # ---- apply the cross-level interactions declared via "latent:tipred"
@@ -494,6 +565,8 @@ ct_lavaan <- function(spec, latentNames = NULL, manifestNames = NULL, data = NUL
     latentNames     = latentNames,
     manifestNames   = manifestNames,
     TIpredNames     = TIpredNames,
+    TDPREDEFFECT    = TDPREDEFFECT,
+    TDpredNames     = tdpred_names,
     crosslevelPairs = crosslevel_lines
   )
 }
@@ -551,6 +624,9 @@ ct_apply_crosslevel <- function(mod, syn, verbose = TRUE) {
   for (cl in syn$crosslevelPairs) {
     idx <- match(cl$latent, syn$latentNames)
     if (is.na(idx)) stop("Cross-level pair references unknown latent '", cl$latent, "'.")
+    from_nm  <- if (is.null(cl$from)) cl$latent else cl$from
+    from_idx <- match(from_nm, syn$latentNames)
+    if (is.na(from_idx)) stop("Cross-level pair references unknown latent '", from_nm, "'.")
     effect_col <- paste0(cl$tipred, "_effect")
     if (!effect_col %in% effect_cols)
       stop("Cross-level pair references TIpred '", cl$tipred, "' not in ",
@@ -558,7 +634,7 @@ ct_apply_crosslevel <- function(mod, syn, verbose = TRUE) {
 
     target <- mod$pars$matrix == "DRIFT" &
       as.character(mod$pars$row) == as.character(idx) &
-      as.character(mod$pars$col) == as.character(idx)
+      as.character(mod$pars$col) == as.character(from_idx)
 
     mod$pars[target, effect_col] <- TRUE
     touched <- touched | target

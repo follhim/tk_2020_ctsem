@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.7.32">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="author" content="Seungju Kim">
+
+<title>Methodological Summary</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+</style>
+
+
+<script src="01.1_methods_files/libs/clipboard/clipboard.min.js"></script>
+<script src="01.1_methods_files/libs/quarto-html/quarto.js" type="module"></script>
+<script src="01.1_methods_files/libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="01.1_methods_files/libs/quarto-html/popper.min.js"></script>
+<script src="01.1_methods_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="01.1_methods_files/libs/quarto-html/anchor.min.js"></script>
+<link href="01.1_methods_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="01.1_methods_files/libs/quarto-html/quarto-syntax-highlighting-37eea08aefeeee20ff55810ff984fec1.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="01.1_methods_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="01.1_methods_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="01.1_methods_files/libs/bootstrap/bootstrap-81267100e462c21b3d6c0d5bf76a3417.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN") {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+</head>
+
+<body class="fullcontent quarto-light">
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">Methodological Summary</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    <div>
+    <div class="quarto-title-meta-heading">Author</div>
+    <div class="quarto-title-meta-contents">
+             <p>Seungju Kim </p>
+          </div>
+  </div>
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<p>In this section, I (attempt) to unpack our analytical approach and how to interpret results. When it comes to interpretting results, I will be pulling from our analytical models, so you should probably review the latter chapters before reading that section here.</p>
+<p>I’m also writing this because this is likely what I would write up in a paper too (although we would likely condense below as it is a bit <em>too</em> detailed).</p>
+<section id="what-are-dt-models" class="level2">
+<h2 class="anchored" data-anchor-id="what-are-dt-models">What are DT-models?</h2>
+<p>To understand how <strong>continuous</strong>-time models work, we begin with <strong>discrete</strong>-time models.</p>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Note
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p>Imagine a simple ESM study, we might have 150 adults, and track (positive and negative) affect 5 times a day across 8 days. For the sake of simplicity, lets assume these beeps are sent out at a specific time (8 am, 10 am, 12pm, 2pm, 5pm).</p>
+<p>Aside from 2-5pm (3hr jump) and 5p-8am (15hr jump), time-intervals are 2 hrs.</p>
+</div>
+</div>
+<p>In a classic multi-level model (MLM), you would cluster around the person to account for non-independence of “beep” observations and perform person-mean centering<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a> to parse out within-person associations between positive and negative affect. In a typical VAR model (e.g., VAR-DSEM) we would estimate:</p>
+<ol type="1">
+<li>The covariance between <code>NAw</code> (within-person) and <code>PAw</code> at <code>t-1</code> <em>and</em> at <code>t</code>.</li>
+<li>The auto-regressive effects between <code>NAw</code><sub>t-1</sub> and <code>NAw</code><sub>t</sub>, and between <code>PAw</code><sub>t-1</sub> and <code>PAw</code><sub>t-1</sub>.</li>
+<li>Finally, the cross-lagged effects from <code>NAw</code><sub>t-1</sub> on <code>PAw</code><sub>t</sub> and <code>PAw</code><sub>t-1</sub> on <code>NAw</code><sub>t</sub>.</li>
+</ol>
+<p>So the main outputs here are the regressive effects: AR and CL.</p>
+<p>In a matrix format, you might present then as</p>
+<p><span id="eq-dtvar"><span class="math display">\[
+\boldsymbol{\eta}_{t} = \mathbf{c} + \boldsymbol{\Phi}\,\boldsymbol{\eta}_{t-1} + \boldsymbol{\zeta}_t,
+\qquad \boldsymbol{\zeta}_t \sim N(\mathbf{0}, \boldsymbol{\Psi})
+\tag{1}\]</span></span></p>
+<p><span id="eq-dtvar-matrices"><span class="math display">\[
+\boldsymbol{\eta}_t =
+\begin{bmatrix} \text{NA}^{w}_{t} \\ \text{PA}^{w}_{t} \end{bmatrix},
+\qquad
+\boldsymbol{\Phi} =
+\begin{bmatrix}
+\phi_{NN} &amp; \phi_{NP} \\
+\phi_{PN} &amp; \phi_{PP}
+\end{bmatrix},
+\qquad
+\boldsymbol{\Psi} =
+\begin{bmatrix}
+\psi_{NN} &amp; \psi_{NP} \\
+\psi_{PN} &amp; \psi_{PP}
+\end{bmatrix}
+\tag{2}\]</span></span></p>
+<p>That’s a lof of equations, but essentially this is the formula used to derive our regression parameters. The main output we are interested is the middle column <a href="#eq-dtvar-matrices" class="quarto-xref">Equation&nbsp;2</a>. The <strong>diagonal</strong> elements are the auto-regressive effects. So <span class="math inline">\(\phi_{NN}\)</span> represents the AR(1) effect of <code>NAw</code><sub>t-1</sub> and <code>NAw</code><sub>t</sub>. The <strong>off-diagonal</strong> elements are the cross-lagged effects so <span class="math inline">\(\phi_{NP}\)</span> represents CL(1) of <code>NAw</code><sub>t-1</sub> on <code>PAw</code><sub>t</sub>.</p>
+</section>
+<section id="the-problem-with-dt-models" class="level2">
+<h2 class="anchored" data-anchor-id="the-problem-with-dt-models">The problem with DT-models</h2>
+<section id="irregular-time-intervals" class="level3">
+<h3 class="anchored" data-anchor-id="irregular-time-intervals">Irregular Time-Intervals</h3>
+<p>The first problem with DT-models are that they not only assume but <strong>require</strong> equal intervals between each beep. Having 3hr or 15hr intervals mixed in violates key assumptions of DT-models. This presents problem both for deriving our parameters of interest, but also for <strong>night</strong>-effects. Many choose to move forward with this assumption or leverage other approaches model effects such that the 5pm–&gt;8am response is coded as missing or removed altogether. An assumption <a href="https://dx.doi.org/10.1037/met0000762">simulation studies</a> show is highly unlikely.</p>
+</section>
+<section id="non-comparability-across-studies" class="level3">
+<h3 class="anchored" data-anchor-id="non-comparability-across-studies">Non-comparability across studies</h3>
+<p>The ability to compare temporal dynamics between different studies is practically impossible given lagged effects are entirely determined by time interval (you couldn’t compare lagged effects from 2hr beeps to 5hr beeps studies). And that’s even if the underlying temporal dynamics are the same.</p>
+</section>
+<section id="lag-dependence-of-cross-effects" class="level3">
+<h3 class="anchored" data-anchor-id="lag-dependence-of-cross-effects">Lag-dependence of cross-effects</h3>
+<p>The cross-lagged effects can rise, peak, and decay all as a function of change in time. Conclusions like “NA predicts PA more strongly than PA predicts NA” can reverse depending on the interval (<a href="https://www.cambridge.org/core/journals/psychometrika/article/time-to-intervene-a-continuoustime-approach-to-network-analysis-and-centrality/56D6CE579A1EB83414D0716D429BEB6C">Kuiper &amp; Ryan, 2018</a>; <a href="doi.org/10.1037/met0000665">Driver, 2025</a>).</p>
+</section>
+<section id="lag-dependence-of-dynamic-effects" class="level3">
+<h3 class="anchored" data-anchor-id="lag-dependence-of-dynamic-effects">Lag-dependence of dynamic effects</h3>
+<p>A DT-VAR returns one autoregressive and one cross-lagged parameter per pair of variables. It is tempting to read these as <em>the</em> effect of NA on itself, or of PA on NA. They are more accurately read as the effect <strong>at the specific interval the study happened to use</strong>. Under a CT model, every element of <span class="math inline">\(\boldsymbol{\Phi}\)</span> is a function of the interval, <strong>so each DT parameter is a single point on a curve.</strong></p>
+<section id="auto-effects" class="level4">
+<h4 class="anchored" data-anchor-id="auto-effects">Auto Effects</h4>
+<p>In a DT model, <span class="math inline">\(\phi_{NN}\)</span> tells us how much of a deviation in NA remains after one lag. What it cannot tell us is <em>how</em> that deviation dissipates. We cannot say how quickly NA returns halfway to baseline, whether most of the recovery happens in the first hour or is spread across the day, or what the carry-over would be at any interval other than the one we measured. In principle, <span class="math inline">\(\boldsymbol{\Phi}^k\)</span> gives the implied carry-over <span class="math inline">\(k\)</span> lags ahead, but only at multiples of the design interval, and only if that interval is constant. In our ESM design it is not: <span class="math inline">\(\phi_{NN}\)</span> is forced to describe both the 2-hour daytime gaps and the 15-hour overnight gap with one number.</p>
+<p>In CT, the auto-effect <span class="math inline">\(a_{NN}\)</span> describes the underlying <em>rate</em> of return to equilibrium, from which the full decay curve <span class="math inline">\(\phi_{NN}(\Delta t)\)</span> can be recovered for any interval. This gives interpretable quantities such as a half-life (<strong>?@eq-halflife</strong>), e.g., “a deviation in NA is halved after roughly <span class="math inline">\(X\)</span> hours.”</p>
+<p>In the bivariate case, even <span class="math inline">\(\phi_{NN}(\Delta t)\)</span> is not purely a self-regulation effect. A shock to NA also shifts PA, which feeds back to NA through the cross-effects. So the DT autoregression conflates NA’s own regulation with this feedback loop, and the half-life is best computed numerically from the full <span class="math inline">\(\boldsymbol{\Phi}(\Delta t)\)</span> rather than from <span class="math inline">\(a_{NN}\)</span> alone.</p>
+</section>
+<section id="cross-effects" class="level4">
+<h4 class="anchored" data-anchor-id="cross-effects">Cross-Effects</h4>
+<p>The problem is sharper for cross-effects, because their curves are not monotonic:</p>
+<ol type="1">
+<li><strong>At <span class="math inline">\(\Delta t = 0\)</span> the cross-effect is exactly zero</strong>, since <span class="math inline">\(\boldsymbol{\Phi}(0) = \mathbf{I}\)</span>. PA needs time to move NA.</li>
+<li><strong>The effect then builds</strong> as PA’s influence on the rate of change in NA accumulates.</li>
+<li><strong>It peaks at some interval and then decays toward zero</strong>, as both variables regulate back toward equilibrium.</li>
+</ol>
+<p>This has three consequences:</p>
+<ul>
+<li><strong>Magnitude depends on the interval.</strong> The same process yields a larger cross-lag at the peak interval than at shorter or longer ones. A small DT cross-lag may reflect a weak effect, or a strong effect measured at the wrong interval.</li>
+<li><strong>Comparisons can reverse.</strong> <span class="math inline">\(\phi_{NP}(\Delta t)\)</span> and <span class="math inline">\(\phi_{PN}(\Delta t)\)</span> peak at different intervals, so claims such as “PA predicts NA more strongly than NA predicts PA” can flip depending on the interval chosen (Kuiper &amp; Ryan, 2018).</li>
+<li><strong>Signs can reverse.</strong> With feedback between the variables, a cross-effect can be positive at short intervals and negative at longer ones (or vice versa), so even the direction of a DT cross-lag is not guaranteed to generalize.</li>
+</ul>
+<p>Studies using different sampling schemes (e.g., 2-hour beeps vs.&nbsp;daily diaries) are therefore not estimating the same quantity, even when they study the same process. The CT drift matrix provides a common, interval-free reference point, and the full set of lag-specific effects can be recovered and reported for any interval of interest.</p>
+</section>
+</section>
+</section>
+
+
+<div id="quarto-appendix" class="default"><section id="footnotes" class="footnotes footnotes-end-of-document" role="doc-endnotes"><h2 class="anchored quarto-appendix-heading">Footnotes</h2>
+
+<ol>
+<li id="fn1"><p>Even though we know that MLMs invoke Nickell’s bias, because an observed person-mean centering approach induces change from both past/future responses (<a href="https://www.statmodel.com/download/DSEM.pdf">Asparouhov et al., 2018</a>; <a href="http://www.statmodel.com/download/CenteredMediation.pdf">Asparouhov &amp; Muthen, 2019</a>). Which is why DSEM has grown increasingly popular by using a latent centering approach.<a href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section></div></main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+        const codeEl = trigger.previousElementSibling.cloneNode(true);
+        for (const childEl of codeEl.children) {
+          if (isCodeAnnotation(childEl)) {
+            childEl.remove();
+          }
+        }
+        return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

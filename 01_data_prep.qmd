@@ -219,6 +219,12 @@ bar_pct(p1_data, esm10)) +
   plot_layout(ncol = 2)
 ```
 
+### Current Situation
+```{r}
+(bar_pct(p1_data, esm24) +
+bar_pct(p1_data, esm25)) +
+  plot_layout(ncol = 2)
+```
 
 ## Separating Floor Effect
 :::callout-important

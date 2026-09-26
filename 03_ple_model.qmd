@@ -4,6 +4,7 @@ format:
   html:
     toc: true
     toc-depth: 6
+    lightbox: auto   # click any figure to enlarge / zoom
 code-line-numbers: true
 code-annotations: true
 editor_options:
@@ -22,6 +23,10 @@ source("cust_funcs/ct_plot.R")
 source("cust_funcs/ct_latex_html.R")
 source("cust_funcs/ct_halflife.R")
 source("cust_funcs/mod_plot.R")
+source("cust_funcs/ct_dpars_plot.R")
+source("cust_funcs/ct_mod_grid.R")
+source("cust_funcs/ct_sig_table.R")
+source("cust_funcs/ct_tp_ppc.R")
 ```
 
 ```{r}
@@ -32,488 +37,1512 @@ p3_data <- readRDS("data/p2_data.Rds")
 ### Standardize Variables
 ```{r}
 p3_data <- p3_data %>%
-  mutate(across(c(zpos, zneg, zdis, esm_psx_sum), scale))
+  mutate(across(c(zpos, zneg, zdis, esm_psx_sum, esm24, esm25), scale))
 
 p3_data %>%
   select(esm_psx_sum, esm_psx_bin, esm_psx_con, zpos, zneg, zdis) %>%
   psych::describe()
 ```
 
-### Julia Backend Setup
-```{r}
-library(ctsem)
-ctJuliaSetup(threads = 10, force = TRUE)
-# JuliaConnectoR::juliaEval("ContinuousTimeSEM._CTSEM_COUNT_MAX_LOGATE[] = 15.0")
-# JuliaConnectoR::juliaEval("ContinuousTimeSEM._CTSEM_COUNT_GENERATE_MAX[] = 500")
-```
-
-## PSX Index (Censored)
+## CENSOR-AUTO
 
 ### Model Specification
 ```{r}
-psx_sum_ctsem <- "
-# Measurement Model
-psx_B =~ esm_psx_sum
-psx_W =~ esm_psx_sum
+psx_cens_trend_data <- p3_data %>%
+  group_by(id) %>%
+  mutate(time_day = time_day + (ave(time_day, time_day, FUN = seq_along) - 1) / 1440) %>%
+  ungroup() %>%
+  arrange(id, time_day) %>%
+  mutate(across(c(esm_psx_sum, zpos, zneg, zdis), as.numeric)) %>%
+  as.data.frame()
 
-# Between/Trend
-psx_B  ~  psx_B
-psx_B ~~  0*psx_B
-psx_B %~% psx_B
-
-# Within (dynamic) factor
-psx_W  ~  psx_W
-psx_W ~~  psx_W
-psx_W %~% psx_W
-
-## T0MEAN
-psx_B ~t0~ 1
-
-CENSOR: esm_psx_sum
-"
-
-psx_censored_syn <- ct_lavaan(psx_sum_ctsem, data = p3_data)
-
-psx_censored_mod <- ctModel(
-  type          = "ct",
-  id            = "id",
-  time          = "time_day",
-  latentNames   = psx_censored_syn$latentNames,
-  manifestNames = psx_censored_syn$manifestNames,
-  LAMBDA        = psx_censored_syn$LAMBDA,
-  DRIFT         = psx_censored_syn$DRIFT,
-  DIFFUSION     = psx_censored_syn$DIFFUSION,
-  T0VAR         = psx_censored_syn$T0VAR,
-  CINT          = psx_censored_syn$CINT,
-  T0MEANS       = psx_censored_syn$T0MEANS,
-  MANIFESTMEANS = psx_censored_syn$MANIFESTMEANS,
-  manifesttype  = psx_censored_syn$manifesttype,
-  censormin     = psx_censored_syn$censormin,
-  censormax     = psx_censored_syn$censormax,
-  n.TIpred      = 3,
-  TIpredNames   = c("zpos", "zneg", "zdis")
+psx_cens_trend_mod <- ctModel(
+  type = "ct", id = "id", time = "time_day",
+  manifestNames = c("esm_psx_sum"),
+  latentNames   = c("psx", "psx_trend"),
+  TIpredNames   = c("zpos", "zneg", "zdis"),
+  manifesttype  = c(4),   # 0 continuous, 1 binary, 4 censored
+  censormin     = c(min(psx_cens_trend_data$esm_psx_sum, na.rm = TRUE)),
+  censormax     = c(Inf),
+  # each observed variable = dynamic process + trend factor
+  LAMBDA = cbind(diag(1), diag(1)),
+  # DRIFT -- dynamic auto-effects + slow trend drifts
+  DRIFT = matrix(c(
+    "psx_psx"        , 0,
+    0                , "drift_psx_trend"),
+    2, 2, byrow = TRUE),
+  # DIFFUSION -- system noise on the dynamic process(es) only
+  DIFFUSION = matrix(c(
+    "diff_psx", 0,
+    0         , 0),
+    2, 2, byrow = TRUE),
+  # T0VAR -- first-beep deviations; trend starts come from random T0MEANS
+  T0VAR = matrix(c(
+    "T0var_psx", 0,
+    0          , 0),
+    2, 2, byrow = TRUE),
+  T0MEANS = c(0, "T0m_psx_trend"),
+  CINT    = c(0, "cint_psx_trend"),
+  MANIFESTMEANS = 0,
+  MANIFESTVAR = matrix(c(
+    "mvar_psx"),
+    1, 1, byrow = TRUE)
 )
 
-effect_cols <- c("zpos_effect", "zneg_effect", "zdis_effect")
+# Random effects = the trend factor's T0MEANS and CINT only (EAS default)
+psx_cens_trend_mod$pars$indvarying <- psx_cens_trend_mod$pars$param %in% c("T0m_psx_trend", "cint_psx_trend")
 
-# Reverted per request: apply TIpred moderation to every parameter (both
-# the between/trait psx_B and within/dynamic psx_W processes), matching
-# ctModel()'s own default (tipredDefault = TRUE leaves every cell's effect
-# columns TRUE already) rather than restricting to psx_W only. No blanket
-# off/selective re-enable here anymore -- this block just confirms/leaves
-# the default in place and prints it for visibility.
-psx_w_idx <- match("psx_W", psx_censored_syn$latentNames)
-target_psx_w <- psx_censored_mod$pars$matrix == "DRIFT" &
-  as.character(psx_censored_mod$pars$row) == as.character(psx_w_idx) &
-  as.character(psx_censored_mod$pars$col) == as.character(psx_w_idx)
+# TIpreds moderate the dynamic auto-effect(s) only
+eff <- paste0(c("zpos", "zneg", "zdis"), "_effect")
+psx_cens_trend_mod$pars[, eff] <- FALSE
+psx_cens_trend_mod$pars[psx_cens_trend_mod$pars$matrix == "DRIFT" &
+               psx_cens_trend_mod$pars$param %in% c("psx_psx"), eff] <- TRUE
 
-# Safety check: ctModel() has been observed to silently default
-# indvarying = FALSE on a free DRIFT diagonal parameter even when nothing
-# in this script asked for that. Confirm psx_W's autoregression is still
-# individually varying, and force it back on if ctModel() defaulted it off.
-stopifnot("indvarying" %in% names(psx_censored_mod$pars))
-psx_censored_mod$pars[target_psx_w, "indvarying"] <- TRUE
+psx_cens_trend_mod$pars[psx_cens_trend_mod$pars$indvarying | rowSums(psx_cens_trend_mod$pars[, eff]) > 0,
+               c("matrix", "row", "col", "param", "indvarying", eff)]
 
-print(psx_censored_mod$pars[psx_censored_mod$pars$matrix == "DRIFT",
-                             c("matrix", "row", "col", "indvarying", effect_cols)])
+ctModelLatexHTML(psx_cens_trend_mod)
 ```
 
 ### Fit Model
 ```{r}
 #| eval: false
-psx_censored_fit <- ctFit(
-  datalong = p3_data,
-  model    = psx_censored_mod,
+ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine (cached per model shape)
+psx_cens_trend_fit <- ctFit(
+  datalong = psx_cens_trend_data,
+  model    = psx_cens_trend_mod,
   backend  = "julia",
   optimcontrol = list(maxiter = 10000),
   cores = 10, plot = FALSE, priors = TRUE
 )
-saveRDS(psx_censored_fit, "03_files/psx_censored_fit.Rds")
+saveRDS(psx_cens_trend_fit, "03_files/psx_cens_trend_fit.Rds")
+beepr::beep(8)
 ```
 
-### Evaluate Model Fit
 ```{r}
-psx_censored_fit <- readRDS("03_files/psx_censored_fit.Rds")
-summary(psx_censored_fit)
+psx_cens_trend_fit <- readRDS("03_files/psx_cens_trend_fit.Rds")
 ```
 
-#### Posterior Predictive Check
+### Posterior Predictive Check
 ```{r}
 #| eval: false
-pp_plot_psx_censored_fit <- ctPostPredPlots(psx_censored_fit)
-saveRDS(pp_plot_psx_censored_fit, "03_files/pp_plot_psx_censored_fit.Rds")
-# save_postpred_plots(pp_plot_psx_censored_fit, "03_files/postpred_psx_censored")
+psx_cens_trend_fit <- ctGenerateFromFit(psx_cens_trend_fit, nsamples = 100)
+pp_psx_cens_trend <- ctPostPredPlots(psx_cens_trend_fit)
+saveRDS(pp_psx_cens_trend, "03_files/pp_psx_cens_trend.rds")
+psx_cens_trend_fit$generated <- NULL; gc()   # free memory
+beepr::beep(8)
 ```
 
 ```{r}
-pp_plot_psx_censored_fit <- readRDS("03_files/pp_plot_psx_censored_fit.Rds")
-
-pp_plot_psx_censored_fit$Density
-pp_plot_psx_censored_fit$MeanTrajectory
-pp_plot_psx_censored_fit$LaggedCovariance_esm_psx_sum
-pp_plot_psx_censored_fit$SubjectLogLik
+pp_psx_cens_trend <- readRDS("03_files/pp_psx_cens_trend.rds")
+pp_psx_cens_trend$Density
+pp_psx_cens_trend$MeanTrajectory
+pp_psx_cens_trend$LaggedCovariance_esm_psx_sum
+pp_psx_cens_trend$SubjectLogLik
 ```
 
-### Visual
+### Results Table
 ```{r}
+ct_sig_table(psx_cens_trend_fit)
+```
+
+### Half-Life
+```{r}
+ct_halflife(psx_cens_trend_fit, c("psx", "psx_trend"), pattern = NULL) %>%
+  ct_sig_gt(lower = "drift_2.5", upper = "drift_97.5")
+```
+
+### Auto-Effects
+```{r}
+#| eval: false
 set.seed(1111)
-ct_effects_plot(
-  psx_censored_fit,
-  effects = c("psx_W>psx_W"),
-  times = seq(0, 8, 0.01),
-  ylim = c(0, 1),
-  title = "Auto-effect: PSX Index (Censored)",
-  legend_labels = c("PSX -> PSX"),
-  latentNames = psx_censored_syn$latentNames
-)
+dp_psx_cens_trend <- ct_dpars_plot(psx_cens_trend_fit,
+  type     = "auto",   # auto-effects only (no cross-effects in this model)
+  exclude  = c("psx_trend"),   # dynamic process(es) only
+  times    = seq(0, 2, 0.02),
+  nsamples = 100)
+saveRDS(dp_psx_cens_trend, "03_files/dp_psx_cens_trend.rds")
+beepr::beep(8)
 ```
 
-:::callout-important
-Although model fit is acceptable, conceptually, a censored/tobit model doesn't make sense when we know the floor effect, truly reflects the floor. 
+```{r}
+dp_psx_cens_trend <- readRDS("03_files/dp_psx_cens_trend.rds")
+dp_psx_cens_trend$plot_auto
+```
 
-It's why we will perform a hurdle/two-part approach below. In this approach, we apply the censored model for the truncated variable, which implies there is indeed values below the **new floor** that has been artificially induced, and thus continuous.
-:::
+### Moderation
+#### TIpred Effects
+```{r}
+summary(psx_cens_trend_fit)$tipreds %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("param") %>%
+  select(param, mean, `2.5%`, `97.5%`) %>%
+  ct_sig_gt(lower = "2.5%", upper = "97.5%")
+```
 
-## Two-Part Approach (Censored Magnitude)
+#### Moderation Plots
+```{r}
+#| eval: false
+set.seed(1111)
+mod_psx_cens_trend <- ct_mod_grid(
+  psx_cens_trend_fit,
+  latentNames = c("psx", "psx_trend"),
+  effects     = c("psx"),
+  tipreds     = c("zpos", "zneg", "zdis"),
+  labels      = c(zpos = "Positive Schizotypy", zneg = "Negative Schizotypy",
+                  zdis = "Disorganized Schizotypy"),
+  times       = seq(0, 2, 0.04),
+  nsamp_use   = 100,
+  x_lab       = "Time (days)"
+)
+saveRDS(mod_psx_cens_trend, "03_files/mod_psx_cens_trend.rds")
+beepr::beep(8)
+```
+
+##### ZPOS
+```{r}
+#| fig-width: 6
+#| fig-height: 4
+mod_psx_cens_trend <- readRDS("03_files/mod_psx_cens_trend.rds")
+patchwork::wrap_plots(lapply(mod_psx_cens_trend$zpos, `[[`, "plot"), ncol = 1, guides = "collect")
+```
+
+##### ZNEG
+```{r}
+#| fig-width: 6
+#| fig-height: 4
+patchwork::wrap_plots(lapply(mod_psx_cens_trend$zneg, `[[`, "plot"), ncol = 1, guides = "collect")
+```
+
+##### ZDIS
+```{r}
+#| fig-width: 6
+#| fig-height: 4
+patchwork::wrap_plots(lapply(mod_psx_cens_trend$zdis, `[[`, "plot"), ncol = 1, guides = "collect")
+```
+
+## CENSOR-PSIT
 
 ### Model Specification
 ```{r}
-psx_twopart_ctsem <- "
+psx_sit_trend_data <- p3_data %>%
+  group_by(id) %>%
+  mutate(time_day = time_day + (ave(time_day, time_day, FUN = seq_along) - 1) / 1440) %>%
+  ungroup() %>%
+  arrange(id, time_day) %>%
+  mutate(across(c(esm_psx_sum, esm24, zpos, zneg, zdis), as.numeric)) %>%
+  as.data.frame()
 
-TIPRED: zpos, zneg, zdis
-# Measurement Model
-## BINARY
-bin_psx_B =~ esm_psx_bin
-bin_psx_W =~ esm_psx_bin
+psx_sit_trend_mod <- ctModel(
+  type = "ct", id = "id", time = "time_day",
+  manifestNames = c("esm_psx_sum", "esm24"),
+  latentNames   = c("psx", "psit", "psx_trend", "psit_trend"),
+  TIpredNames   = c("zpos", "zneg", "zdis"),
+  manifesttype  = c(4, 0),                                  # censored, continuous
+  censormin     = c(min(psx_sit_trend_data$esm_psx_sum, na.rm = TRUE), -Inf), # floor of esm_psx_sum
+  censormax     = c(Inf, Inf),
+  # each observed variable = dynamic process + trend factor
+  LAMBDA = cbind(diag(2), diag(2)),
+  # DRIFT -- labels are predictor_outcome (psit_psx = psit -> psx)
+  DRIFT = matrix(c(
+    "psx_psx"         , "psit_psx"        , 0                 , 0                 ,
+    "psx_psit"        , "psit_psit"       , 0                 , 0                 ,
+    0                 , 0                 , "drift_psx_trend" , 0                 ,
+    0                 , 0                 , 0                 , "drift_psit_trend"),
+    4, 4, byrow = TRUE),
+  # DIFFUSION -- system noise on the dynamic processes only
+  DIFFUSION = matrix(c(
+    "diff_psx"     , 0              , 0              , 0              ,
+    "diff_psx_psit", "diff_psit"    , 0              , 0              ,
+    0              , 0              , 0              , 0              ,
+    0              , 0              , 0              , 0),
+    4, 4, byrow = TRUE),
+  # T0VAR -- first-beep deviations; trend starts come from random T0MEANS
+  T0VAR = matrix(c(
+    "T0var_psx"     , 0               , 0               , 0               ,
+    "T0var_psx_psit", "T0var_psit"    , 0               , 0               ,
+    0               , 0               , 0               , 0               ,
+    0               , 0               , 0               , 0),
+    4, 4, byrow = TRUE),
+  T0MEANS = c(0, 0, "T0m_psx_trend", "T0m_psit_trend"),
+  CINT    = c(0, 0, "cint_psx_trend", "cint_psit_trend"),
+  MANIFESTMEANS = 0,
+  MANIFESTVAR = matrix(c(
+    "mvar_psx", 0,
+    0,          "mvar_psit"), 2, 2, byrow = TRUE)
+)
 
-## CONT.
-con_psx_B =~ esm_psx_con
-con_psx_W =~ esm_psx_con
+# Random effects = the trend factors' T0MEANS and CINT only (EAS default)
+psx_sit_trend_mod$pars$indvarying <- psx_sit_trend_mod$pars$param %in%
+  c("T0m_psx_trend", "T0m_psit_trend", "cint_psx_trend", "cint_psit_trend")
 
-# Between/Trend
-bin_psx_B  ~  0*bin_psx_B
-bin_psx_B ~~  0*bin_psx_B
-bin_psx_B %~% bin_psx_B
+# TIpreds moderate the four dynamic DRIFT cells (auto- and cross-effects) only
+eff <- paste0(c("zpos", "zneg", "zdis"), "_effect")
+psx_sit_trend_mod$pars[, eff] <- FALSE
+psx_sit_trend_mod$pars[psx_sit_trend_mod$pars$matrix == "DRIFT" &
+               psx_sit_trend_mod$pars$param %in% c("psx_psx", "psit_psx", "psx_psit", "psit_psit"), eff] <- TRUE
 
-con_psx_B  ~  0*con_psx_B
-con_psx_B ~~  0*con_psx_B
-con_psx_B %~% con_psx_B
+psx_sit_trend_mod$pars[psx_sit_trend_mod$pars$indvarying | rowSums(psx_sit_trend_mod$pars[, eff]) > 0,
+               c("matrix", "row", "col", "param", "indvarying", eff)]
 
-bin_psx_B %~% con_psx_B
-
-# Within (dynamic) factor
-## BINARY
-bin_psx_W  ~  bin_psx_W + bin_psx_W:zpos + bin_psx_W:zneg + bin_psx_W:zdis
-bin_psx_W ~~  bin_psx_W
-bin_psx_W %~% bin_psx_W
-
-## CONT.
-con_psx_W  ~  con_psx_W + con_psx_W:zpos + con_psx_W:zneg + con_psx_W:zdis
-con_psx_W ~~  con_psx_W
-con_psx_W %~% con_psx_W
-
-## T0MEAN
-bin_psx_B ~t0~ 1
-con_psx_B ~t0~ 1
-
-# esm_psx_con ~ 1
-
-BINARY: esm_psx_bin
-CENSOR: esm_psx_con
-"
-
-psx_twopart_syn <- ct_lavaan(psx_twopart_ctsem, data = p3_data)
-
-# ct_lavaan() already builds the ctModel() object AND -- because the spec
-# above declares "bin_psx_W:zpos + bin_psx_W:zneg + bin_psx_W:zdis" /
-# "con_psx_W:zpos + ..." cross-level lines -- already ran
-# ct_apply_crosslevel() on it internally (crosslevel = TRUE is the
-# default): every zpos_effect/zneg_effect/zdis_effect column is already
-# switched off except on bin_psx_W's and con_psx_W's own DRIFT diagonal,
-# and indvarying is already forced TRUE on those same cells. So no manual
-# match()/target_*/pars[...] <- TRUE block is needed here (that pattern is
-# only for specs, like the PSX Index one above, that don't use inline
-# "latent:tipred" declarations and instead want every TIpred effect left
-# on via ctModel()'s tipredDefault).
-psx_twopart_mod <- psx_twopart_syn$mod
-
-print(psx_twopart_mod$pars[psx_twopart_mod$pars$matrix == "DRIFT",
-                           c("matrix", "row", "col", "indvarying", effect_cols)])
+ctModelLatexHTML(psx_sit_trend_mod)
 ```
-
-
-### Model
-```{r}
-#| out.extra: 'class="lightbox"'
-ctModelLatexHTML(psx_twopart_mod)
-```
-
 
 ### Fit Model
 ```{r}
 #| eval: false
-ctJuliaSetup(threads = 10, force = TRUE)
-psx_twopart_fit <- ctFit(
-  datalong = p3_data,
-  model    = psx_twopart_mod,
+ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine (cached per model shape)
+psx_sit_trend_fit <- ctFit(
+  datalong = psx_sit_trend_data,
+  model    = psx_sit_trend_mod,
   backend  = "julia",
   optimcontrol = list(maxiter = 10000),
   cores = 10, plot = FALSE, priors = TRUE
 )
-
+saveRDS(psx_sit_trend_fit, "03_files/psx_sit_trend_fit.Rds")
 beepr::beep(8)
-saveRDS(psx_twopart_fit, "03_files/psx_twopart_fit.Rds")
 ```
 
-### Evaluate Model Fit
 ```{r}
-#| out.extra: 'class="lightbox"'
-psx_twopart_fit <- readRDS("03_files/psx_twopart_fit.Rds")
-ctModelLatexHTML(psx_twopart_fit)
+psx_sit_trend_fit <- readRDS("03_files/psx_sit_trend_fit.Rds")
+```
+
+### Posterior Predictive Check
+```{r}
+#| eval: false
+psx_sit_trend_fit <- ctGenerateFromFit(psx_sit_trend_fit, nsamples = 100)
+pp_psx_sit_trend <- ctPostPredPlots(psx_sit_trend_fit)
+saveRDS(pp_psx_sit_trend, "03_files/pp_psx_sit_trend.rds")
+psx_sit_trend_fit$generated <- NULL; gc()   # free memory
+beepr::beep(8)
+```
+
+```{r}
+pp_psx_sit_trend <- readRDS("03_files/pp_psx_sit_trend.rds")
+pp_psx_sit_trend$Density
+pp_psx_sit_trend$MeanTrajectory
+pp_psx_sit_trend$LaggedCovariance_esm_psx_sum
+pp_psx_sit_trend$LaggedCovariance_esm24
+pp_psx_sit_trend$SubjectLogLik
+```
+
+### Results Table
+```{r}
+ct_sig_table(psx_sit_trend_fit)
+```
+
+### Auto- and Cross-Effects
+```{r}
+#| eval: false
+set.seed(1111)
+dp_psx_sit_trend <- ct_dpars_plot(psx_sit_trend_fit,
+  exclude  = c("psx_trend", "psit_trend"),   # dynamic processes only
+  times    = seq(0, 2, 0.02),
+  nsamples = 100)
+saveRDS(dp_psx_sit_trend, "03_files/dp_psx_sit_trend.rds")
+beepr::beep(8)
+```
+
+```{r}
+dp_psx_sit_trend <- readRDS("03_files/dp_psx_sit_trend.rds")
+dp_psx_sit_trend$plot_auto
+dp_psx_sit_trend$plot_cross
+dp_psx_sit_trend$peaks %>%
+  dplyr::select(Effect, `Time interval`, median, lower, upper) %>%
+  ct_sig_gt(lower = "lower", upper = "upper")
+```
+
+### Moderation
+#### TIpred Effects
+```{r}
+summary(psx_sit_trend_fit)$tipreds %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("param") %>%
+  select(param, mean, `2.5%`, `97.5%`) %>%
+  ct_sig_gt(lower = "2.5%", upper = "97.5%")
+```
+
+#### Moderation Plots
+```{r}
+#| eval: false
+set.seed(1111)
+mod_psx_sit_trend <- ct_mod_grid(
+  psx_sit_trend_fit,
+  latentNames = c("psx", "psit", "psx_trend", "psit_trend"),
+  effects     = c("psx", "psit>psx", "psx>psit", "psit"),
+  tipreds     = c("zpos", "zneg", "zdis"),
+  labels      = c(zpos = "Positive Schizotypy", zneg = "Negative Schizotypy",
+                  zdis = "Disorganized Schizotypy"),
+  times       = seq(0, 2, 0.04),
+  nsamp_use   = 100,
+  x_lab       = "Time (days)"
+)
+saveRDS(mod_psx_sit_trend, "03_files/mod_psx_sit_trend.rds")
+beepr::beep(8)
+```
+
+##### ZPOS
+```{r}
+#| fig-width: 12
+#| fig-height: 8
+mod_psx_sit_trend <- readRDS("03_files/mod_psx_sit_trend.rds")
+patchwork::wrap_plots(lapply(mod_psx_sit_trend$zpos, `[[`, "plot"), ncol = 2, guides = "collect")
+```
+
+##### ZNEG
+```{r}
+#| fig-width: 12
+#| fig-height: 8
+patchwork::wrap_plots(lapply(mod_psx_sit_trend$zneg, `[[`, "plot"), ncol = 2, guides = "collect")
+```
+
+##### ZDIS
+```{r}
+#| fig-width: 12
+#| fig-height: 8
+patchwork::wrap_plots(lapply(mod_psx_sit_trend$zdis, `[[`, "plot"), ncol = 2, guides = "collect")
+```
+
+## CENSOR-SSIT
+
+### Model Specification
+```{r}
+psx_str_trend_data <- p3_data %>%
+  group_by(id) %>%
+  mutate(time_day = time_day + (ave(time_day, time_day, FUN = seq_along) - 1) / 1440) %>%
+  ungroup() %>%
+  arrange(id, time_day) %>%
+  mutate(across(c(esm_psx_sum, esm25, zpos, zneg, zdis), as.numeric)) %>%
+  as.data.frame()
+
+psx_str_trend_mod <- ctModel(
+  type = "ct", id = "id", time = "time_day",
+  manifestNames = c("esm_psx_sum", "esm25"),
+  latentNames   = c("psx", "ssit", "psx_trend", "ssit_trend"),
+  TIpredNames   = c("zpos", "zneg", "zdis"),
+  manifesttype  = c(4, 0),                                  # censored, continuous
+  censormin     = c(min(psx_str_trend_data$esm_psx_sum, na.rm = TRUE), -Inf), # floor of esm_psx_sum
+  censormax     = c(Inf, Inf),
+  # each observed variable = dynamic process + trend factor
+  LAMBDA = cbind(diag(2), diag(2)),
+  # DRIFT -- labels are predictor_outcome (ssit_psx = ssit -> psx)
+  DRIFT = matrix(c(
+    "psx_psx"         , "ssit_psx"        , 0                 , 0                 ,
+    "psx_ssit"        , "ssit_ssit"       , 0                 , 0                 ,
+    0                 , 0                 , "drift_psx_trend" , 0                 ,
+    0                 , 0                 , 0                 , "drift_ssit_trend"),
+    4, 4, byrow = TRUE),
+  # DIFFUSION -- system noise on the dynamic processes only
+  DIFFUSION = matrix(c(
+    "diff_psx"     , 0              , 0              , 0              ,
+    "diff_psx_ssit", "diff_ssit"    , 0              , 0              ,
+    0              , 0              , 0              , 0              ,
+    0              , 0              , 0              , 0),
+    4, 4, byrow = TRUE),
+  # T0VAR -- first-beep deviations; trend starts come from random T0MEANS
+  T0VAR = matrix(c(
+    "T0var_psx"     , 0               , 0               , 0               ,
+    "T0var_psx_ssit", "T0var_ssit"    , 0               , 0               ,
+    0               , 0               , 0               , 0               ,
+    0               , 0               , 0               , 0),
+    4, 4, byrow = TRUE),
+  T0MEANS = c(0, 0, "T0m_psx_trend", "T0m_ssit_trend"),
+  CINT    = c(0, 0, "cint_psx_trend", "cint_ssit_trend"),
+  MANIFESTMEANS = 0,
+  MANIFESTVAR = matrix(c(
+    "mvar_psx", 0,
+    0,          "mvar_ssit"), 2, 2, byrow = TRUE)
+)
+
+# Random effects = the trend factors' T0MEANS and CINT only (EAS default)
+psx_str_trend_mod$pars$indvarying <- psx_str_trend_mod$pars$param %in%
+  c("T0m_psx_trend", "T0m_ssit_trend", "cint_psx_trend", "cint_ssit_trend")
+
+# TIpreds moderate the four dynamic DRIFT cells (auto- and cross-effects) only
+eff <- paste0(c("zpos", "zneg", "zdis"), "_effect")
+psx_str_trend_mod$pars[, eff] <- FALSE
+psx_str_trend_mod$pars[psx_str_trend_mod$pars$matrix == "DRIFT" &
+               psx_str_trend_mod$pars$param %in% c("psx_psx", "ssit_psx", "psx_ssit", "ssit_ssit"), eff] <- TRUE
+
+psx_str_trend_mod$pars[psx_str_trend_mod$pars$indvarying | rowSums(psx_str_trend_mod$pars[, eff]) > 0,
+               c("matrix", "row", "col", "param", "indvarying", eff)]
+
+ctModelLatexHTML(psx_str_trend_mod)
+```
+
+### Fit Model
+```{r}
+#| eval: false
+ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine (cached per model shape)
+psx_str_trend_fit <- ctFit(
+  datalong = psx_str_trend_data,
+  model    = psx_str_trend_mod,
+  backend  = "julia",
+  optimcontrol = list(maxiter = 10000),
+  cores = 10, plot = FALSE, priors = TRUE
+)
+saveRDS(psx_str_trend_fit, "03_files/psx_str_trend_fit.Rds")
+beepr::beep(8)
+```
+
+```{r}
+psx_str_trend_fit <- readRDS("03_files/psx_str_trend_fit.Rds")
+```
+
+### Posterior Predictive Check
+```{r}
+#| eval: false
+psx_str_trend_fit <- ctGenerateFromFit(psx_str_trend_fit, nsamples = 100)
+pp_psx_str_trend <- ctPostPredPlots(psx_str_trend_fit)
+saveRDS(pp_psx_str_trend, "03_files/pp_psx_str_trend.rds")
+psx_str_trend_fit$generated <- NULL; gc()   # free memory
+beepr::beep(8)
+```
+
+```{r}
+pp_psx_str_trend <- readRDS("03_files/pp_psx_str_trend.rds")
+pp_psx_str_trend$Density
+pp_psx_str_trend$MeanTrajectory
+pp_psx_str_trend$LaggedCovariance_esm_psx_sum
+pp_psx_str_trend$LaggedCovariance_esm25
+pp_psx_str_trend$SubjectLogLik
+```
+
+### Results Table
+```{r}
+ct_sig_table(psx_str_trend_fit)
+```
+
+### Auto- and Cross-Effects
+```{r}
+#| eval: false
+set.seed(1111)
+dp_psx_str_trend <- ct_dpars_plot(psx_str_trend_fit,
+  exclude  = c("psx_trend", "ssit_trend"),   # dynamic processes only
+  times    = seq(0, 2, 0.02),
+  nsamples = 100)
+saveRDS(dp_psx_str_trend, "03_files/dp_psx_str_trend.rds")
+beepr::beep(8)
+```
+
+```{r}
+dp_psx_str_trend <- readRDS("03_files/dp_psx_str_trend.rds")
+dp_psx_str_trend$plot_auto
+dp_psx_str_trend$plot_cross
+dp_psx_str_trend$peaks %>%
+  dplyr::select(Effect, `Time interval`, median, lower, upper) %>%
+  ct_sig_gt(lower = "lower", upper = "upper")
+```
+
+### Moderation
+#### TIpred Effects
+```{r}
+summary(psx_str_trend_fit)$tipreds %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("param") %>%
+  select(param, mean, `2.5%`, `97.5%`) %>%
+  ct_sig_gt(lower = "2.5%", upper = "97.5%")
+```
+
+#### Moderation Plots
+```{r}
+#| eval: false
+set.seed(1111)
+mod_psx_str_trend_neg <- ct_mod_grid(
+  psx_str_trend_fit,
+  latentNames = c("psx", "ssit"),
+  effects     = c("psx", "ssit>psx", "psx>ssit", "ssit"),
+  tipreds     = c("zneg"),
+  labels      = c(zneg = "Negative Schizotypy"),
+  times       = seq(0, 5, 0.01),
+  nsamp_use   = 100,
+  x_lab       = "Time (days)"
+)
+saveRDS(mod_psx_str_trend_neg, "03_files/mod_psx_str_trend_neg.rds")
+beepr::beep(8)
+```
+
+##### ZNEG
+```{r}
+#| fig-width: 12
+#| fig-height: 8
+mod_psx_str_trend_neg <- readRDS("03_files/mod_psx_str_trend_neg.rds")
+patchwork::wrap_plots(lapply(mod_psx_str_trend_neg$zneg, `[[`, "plot"), ncol = 2, guides = "collect")
+```
+
+##### ZDIS
+```{r}
+#| eval: false
+set.seed(1111)
+mod_psx_str_trend_dis <- ct_mod_grid(
+  psx_str_trend_fit,
+  latentNames = c("psx", "ssit"),
+  effects     = c("psx", "psx>ssit"),
+  tipreds     = c("zdis"),
+  labels      = c(zdis = "Disorganized Schizotypy"),
+  times       = seq(0, 5, 0.01),
+  nsamp_use   = 100,
+  x_lab       = "Time (days)"
+)
+saveRDS(mod_psx_str_trend_dis, "03_files/mod_psx_str_trend_dis.rds")
+beepr::beep(8)
+```
+```{r}
+#| fig-width: 12
+#| fig-height: 8
+mod_psx_str_trend_dis <- readRDS("03_files/mod_psx_str_trend_dis.rds")
+patchwork::wrap_plots(lapply(mod_psx_str_trend_dis$zdis, `[[`, "plot"), ncol = 2, guides = "collect")
+```
+
+## Sensitivity Checks
+
+:::callout-note
+Non-final models, kept for comparison (specification, fit, posterior predictive check and results table).
+
+- **TP-ORD-LINK-AUTO**: two-part (occurrence + ordinal magnitude) with the occurrence-magnitude link.
+- **TP-ORD-AUTO / TP-CENS-AUTO / TP-CNT-AUTO**: two-part without the link; ordinal, censored and count magnitude.
+- **TP-AUTO-EVER**: TP-ORD-LINK-AUTO without the participants who never reported any occurrence.
+- **TP-PSIT / TP-SSIT**: two-part (occurrence + censored magnitude) versions of CENSOR-PSIT / CENSOR-SSIT.
+- **TP-ORD-PSIT / TP-ORD-SSIT**: TP-PSIT / TP-SSIT with ordinal magnitude.
+:::
+
+### TP-ORD-LINK-AUTO
+
+#### Model Specification
+```{r}
+# ordinal magnitude from the raw (unscaled) esm_psx_con: 9 categories
+raw_con <- as.numeric(readRDS("data/p2_data.Rds")$esm_psx_con)
+stopifnot(length(raw_con) == nrow(p3_data), all(raw_con[!is.na(raw_con)] >= 1))
+ord_breaks <- c(0, 1, 2, 3, 4, 5, 6, 9, 12, Inf)   # 1,2,3,4,5,6,7-9,10-12,13+
+
+psx_tpo2_data <- p3_data %>%
+  mutate(esm_psx_ord = as.numeric(cut(raw_con, breaks = ord_breaks, labels = FALSE))) %>%  # 1..9, NA when absent
+  group_by(id) %>%
+  mutate(time_day = time_day + (ave(time_day, time_day, FUN = seq_along) - 1) / 1440) %>%
+  ungroup() %>%
+  arrange(id, time_day) %>%
+  mutate(across(c(esm_psx_bin, esm_psx_ord, zpos, zneg, zdis), as.numeric)) %>%
+  as.data.frame()
+
+table(psx_tpo2_data$esm_psx_ord, useNA = "ifany")   # 460 232 253 194 187 139 172 119 181 + NA
+
+psx_tpo2_mod <- ctModel(
+  type = "ct", id = "id", time = "time_day",
+  manifestNames = c("esm_psx_bin", "esm_psx_ord"),
+  latentNames   = c("bin_psx", "ord_psx", "bin_psx_trend", "ord_psx_trend"),
+  TIpredNames   = c("zpos", "zneg", "zdis"),
+  manifesttype  = c(1, 2),   # binary, ordinal
+  ncategories   = c(0, 9),   # 9 ordinal categories for esm_psx_ord
+  # each observed variable = dynamic process + trend factor
+  LAMBDA = cbind(diag(2), diag(2)),
+  # DRIFT -- dynamic auto-effects + slow trend drifts
+  DRIFT = matrix(c(
+    "bin_psx_bin_psx"    , 0                    , 0                    , 0,
+    0                    , "ord_psx_ord_psx"    , 0                    , 0,
+    0                    , 0                    , "drift_bin_psx_trend", 0,
+    0                    , 0                    , 0                    , "drift_ord_psx_trend"),
+    4, 4, byrow = TRUE),
+  # DIFFUSION -- system noise on the dynamic process(es) only
+  DIFFUSION = matrix(c(
+    "diff_bin_psx"    , 0                 , 0                 , 0,
+    "diff_bin_ord_psx", "diff_ord_psx"    , 0                 , 0,
+    0                 , 0                 , 0                 , 0,
+    0                 , 0                 , 0                 , 0),
+    4, 4, byrow = TRUE),
+  # T0VAR -- first-beep deviations; trend starts come from random T0MEANS
+  T0VAR = matrix(c(
+    "T0var_bin_psx"    , 0                  , 0                  , 0,
+    "T0var_bin_ord_psx", "T0var_ord_psx"    , 0                  , 0,
+    0                  , 0                  , 0                  , 0,
+    0                  , 0                  , 0                  , 0),
+    4, 4, byrow = TRUE),
+  T0MEANS = c(0, 0, "T0m_bin_psx_trend", "T0m_ord_psx_trend"),
+  CINT    = c(0, 0, "cint_bin_psx_trend", "cint_ord_psx_trend"),
+  MANIFESTMEANS = 0,
+  MANIFESTVAR = matrix(c(
+    0             , 0,
+    0             , 0),
+    2, 2, byrow = TRUE)
+)
+
+# Random effects = the trend factor's T0MEANS and CINT only (EAS default)
+psx_tpo2_mod$pars$indvarying <- psx_tpo2_mod$pars$param %in% c("T0m_bin_psx_trend", "T0m_ord_psx_trend", "cint_bin_psx_trend", "cint_ord_psx_trend")
+
+# TIpreds moderate the dynamic auto-effect(s) only
+eff <- paste0(c("zpos", "zneg", "zdis"), "_effect")
+psx_tpo2_mod$pars[, eff] <- FALSE
+psx_tpo2_mod$pars[psx_tpo2_mod$pars$matrix == "DRIFT" &
+               psx_tpo2_mod$pars$param %in% c("bin_psx_bin_psx", "ord_psx_ord_psx"), eff] <- TRUE
+
+psx_tpo2_mod$pars[psx_tpo2_mod$pars$indvarying | rowSums(psx_tpo2_mod$pars[, eff]) > 0,
+               c("matrix", "row", "col", "param", "indvarying", eff)]
+
+ctModelLatexHTML(psx_tpo2_mod)
+```
+
+#### Fit Model
+```{r}
+#| eval: false
+ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine (cached per model shape)
+psx_tpo2_fit <- ctFit(
+  datalong = psx_tpo2_data,
+  model    = psx_tpo2_mod,
+  backend  = "julia",
+  optimcontrol = list(maxiter = 10000),
+  cores = 10, plot = FALSE, priors = TRUE
+)
+saveRDS(psx_tpo2_fit, "03_files/psx_tpo2_fit.Rds")
+beepr::beep(8)
+```
+
+```{r}
+psx_tpo2_fit <- readRDS("03_files/psx_tpo2_fit.Rds")
 ```
 
 #### Posterior Predictive Check
 ```{r}
 #| eval: false
-pp_plot_psx_twopart_fit <- ctPostPredPlots(psx_twopart_fit)
-saveRDS(pp_plot_psx_twopart_fit, "03_files/pp_plot_psx_twopart_fit.Rds")
-beepr::beep(8)
-# save_postpred_plots(pp_plot_psx_twopart_fit, "03_files/postpred_psx_twopart")
-```
+psx_tpo2_fit <- ctGenerateFromFit(psx_tpo2_fit, nsamples = 100)
+pp_psx_tpo2 <- ctPostPredPlots(psx_tpo2_fit)
+saveRDS(pp_psx_tpo2, "03_files/pp_psx_tpo2.rds")
 
-```{r}
-pp_plot_psx_twopart_fit <- readRDS("03_files/pp_plot_psx_twopart_fit.Rds")
-
-pp_plot_psx_twopart_fit$Density
-pp_plot_psx_twopart_fit$MeanTrajectory
-pp_plot_psx_twopart_fit$LaggedCovariance_esm_psx_bin
-pp_plot_psx_twopart_fit$LaggedCovariance_esm_psx_con
-pp_plot_psx_twopart_fit$SubjectLogLik
-```
-
-### Visual
-```{r}
-summary(psx_twopart_fit)$parmatrices %>%
-  filter(matrix == "DRIFT") %>%
-  filter(row == col) %>%
-  filter(Mean != 0) 
-```
-
-:::callout-note
-The first drift effect refers to the rate of decay for the occurence of any PSX. While the second drift effect refers to decay for the magnitude of PSX.
-:::
-
-```{r}
-psx_twopart_halflife <- ct_halflife(psx_twopart_fit, psx_twopart_syn$latentNames)
-psx_twopart_halflife %>% gt::gt()
-```
-
-:::callout-note
-Half-life = time for a deviation from equilibrium to decay to half its size: `log(2) / -drift`, in days and hours (only defined when drift < 0). Occurrence (`bin_psx_W`) decays with a half-life of about `r round(psx_twopart_halflife$halflife_hours[psx_twopart_halflife$latent == "bin_psx_W"], 2)` hours, versus about `r round(psx_twopart_halflife$halflife_days[psx_twopart_halflife$latent == "con_psx_W"], 2)` days for magnitude (`con_psx_W`) -- consistent with occurrence being volatile and magnitude being inertial, as noted below.
-:::
-
-#### Binary
-```{r}
-set.seed(1111)
-ct_effects_plot(
-  psx_twopart_fit,
-  effects = c("bin_psx_W>bin_psx_W"),
-  times = seq(0, 2, 0.01),
-  ylim = c(0, 1),
-  title = "Auto-effects: Two-Part (Censored Magnitude)",
-  legend_labels = c("PSX (occurrence) -> PSX (occurrence)"),
-  latentNames = psx_twopart_syn$latentNames
-)
-```
-
-:::callout-important
-Since this indicator only reflects whether PSX was endorsed or not, it carries no information about how severe the experience was. The drift here captures the rate at which the "just endorsed PSX" state fades back to baseline likelihood.
-
-Technical interpretation: when an individual reports PSX, the elevated likelihood of reporting PSX again decays at a specific rate (−3.482) — i.e., endorsing PSX at one moment tells you little about whether they'll endorse it again shortly after; occurrence is not "sticky."
-:::
-
-#### Magnitude
-```{r}
-set.seed(1111)
-ct_effects_plot(
-  psx_twopart_fit,
-  effects = c("con_psx_W>con_psx_W"),
-  times = seq(0, 8, 0.01),
-  ylim = c(0, 1),
-  title = "Auto-effects: Two-Part (Censored Magnitude)",
-  legend_labels = c("PSX (magnitude) -> PSX (magnitude)"),
-  latentNames = psx_twopart_syn$latentNames
-)
-```
-
-:::callout-important
-Since this indicator captures how intense/severe PSX is (not just present/absent), the drift here captures the rate at which elevated severity returns to baseline. A slow return to equilibrium indicates high inertia.
-
-Technical interpretation: when someone reports greater PSX, that elevated severity tends to persist — it takes longer to decay back down to their typical (floor) level, rather than resolving quickly.
-
-**Putting them together:** occurrence is volatile (endorsing PSX at any moment doesn't predict endorsing it again soon), while magnitude is inertial (once severity rises, it stays elevated for a while before subsiding) — i.e., whether someone reports PSX fluctuates quickly, but how bad it is when they do tends to linger.
-:::
-
-### Binary Cross-level Interaction
-#### Auto-Effect
-```{r}
-summary(psx_twopart_fit)$tipreds %>%
-  as.data.frame() %>%
-  tibble::rownames_to_column("param") %>%
-  filter(grepl("auto_bin_psx_W", param)) %>%
-  select(param, mean, `2.5%`, `97.5%`) %>%
-  gt::gt()
-```
-
-:::callout-note
-Two significant cross-level interactions:  
--  ZPOS and ZDIS, both associated with slower decay of PLE.
-:::
-
-#### ZPOS
-```{r}
-#| eval: false
-zpos_ple_bin_cross <- plot_ribbon_multi(
-  psx_twopart_fit,
-  interaction  = "tip_zpos_auto_bin_psx_W",
-  times        = seq(0, 2, 0.05),
-  nsamp_use    = 200,
-  x_lab        = "Time (days)",
-  legend_title = "Positive Schitzotypy",
-  line_width   = 0.5,
-  bound_width  = 0.3
-)
-saveRDS(zpos_ple_bin_cross, "03_files/zpos_ple_bin_cross.rds")
+# two-part check: magnitude only where the MODEL's own occurrence = 1
+tpc_psx_tpo2 <- ct_tp_ppc(psx_tpo2_fit, psx_tpo2_data, "esm_psx_bin", "esm_psx_ord",
+  breaks = NULL)
+saveRDS(tpc_psx_tpo2, "03_files/tpc_psx_tpo2.rds")
+psx_tpo2_fit$generated <- NULL; gc()   # free memory
 beepr::beep(8)
 ```
 
 ```{r}
-zpos_ple_bin_cross <- readRDS("03_files/zpos_ple_bin_cross.rds")
-zpos_ple_bin_cross$plot
+pp_psx_tpo2 <- readRDS("03_files/pp_psx_tpo2.rds")
+pp_psx_tpo2$Density
+pp_psx_tpo2$MeanTrajectory
+pp_psx_tpo2$LaggedCovariance_esm_psx_bin
+pp_psx_tpo2$LaggedCovariance_esm_psx_ord
+pp_psx_tpo2$SubjectLogLik
 ```
 
-:::callout-note
-Higher Pos-Z demonstrates slower decay, while lower Pos-Z demonstrates faster decay.
-:::
+#### Results Table
+```{r}
+ct_sig_table(psx_tpo2_fit)
+```
 
-#### ZDIS
+### TP-ORD-AUTO
+
+#### Model Specification
+```{r}
+# ordinal magnitude from the raw (unscaled) esm_psx_con: 9 categories
+raw_con <- as.numeric(readRDS("data/p2_data.Rds")$esm_psx_con)
+stopifnot(length(raw_con) == nrow(p3_data), all(raw_con[!is.na(raw_con)] >= 1))
+ord_breaks <- c(0, 1, 2, 3, 4, 5, 6, 9, 12, Inf)   # 1,2,3,4,5,6,7-9,10-12,13+
+
+psx_tpo_trend_data <- p3_data %>%
+  mutate(esm_psx_ord = as.numeric(cut(raw_con, breaks = ord_breaks, labels = FALSE))) %>%  # 1..9, NA when absent
+  group_by(id) %>%
+  mutate(time_day = time_day + (ave(time_day, time_day, FUN = seq_along) - 1) / 1440) %>%
+  ungroup() %>%
+  arrange(id, time_day) %>%
+  mutate(across(c(esm_psx_bin, esm_psx_ord, zpos, zneg, zdis), as.numeric)) %>%
+  as.data.frame()
+
+table(psx_tpo_trend_data$esm_psx_ord, useNA = "ifany")   # expect 460 232 253 194 187 139 172 119 181 + NA
+
+psx_tpo_trend_mod <- ctModel(
+  type = "ct", id = "id", time = "time_day",
+  manifestNames = c("esm_psx_bin", "esm_psx_ord"),
+  latentNames   = c("bin_psx", "ord_psx", "bin_psx_trend", "ord_psx_trend"),
+  TIpredNames   = c("zpos", "zneg", "zdis"),
+  manifesttype  = c(1, 2),   # binary, ordinal
+  ncategories   = c(0, 9),   # 9 ordinal categories for esm_psx_ord
+  # each observed variable = dynamic process + trend factor
+  LAMBDA = cbind(diag(2), diag(2)),
+  # DRIFT -- dynamic auto-effects + slow trend drifts
+  DRIFT = matrix(c(
+    "bin_psx_bin_psx"    , 0                    , 0                    , 0,
+    0                    , "ord_psx_ord_psx"    , 0                    , 0,
+    0                    , 0                    , "drift_bin_psx_trend", 0,
+    0                    , 0                    , 0                    , "drift_ord_psx_trend"),
+    4, 4, byrow = TRUE),
+  # DIFFUSION -- system noise on the dynamic process(es) only
+  DIFFUSION = matrix(c(
+    "diff_bin_psx", 0             , 0             , 0,
+    0             , "diff_ord_psx", 0             , 0,
+    0             , 0             , 0             , 0,
+    0             , 0             , 0             , 0),
+    4, 4, byrow = TRUE),
+  # T0VAR -- first-beep deviations; trend starts come from random T0MEANS
+  T0VAR = matrix(c(
+    "T0var_bin_psx", 0              , 0              , 0,
+    0              , "T0var_ord_psx", 0              , 0,
+    0              , 0              , 0              , 0,
+    0              , 0              , 0              , 0),
+    4, 4, byrow = TRUE),
+  T0MEANS = c(0, 0, "T0m_bin_psx_trend", "T0m_ord_psx_trend"),
+  CINT    = c(0, 0, "cint_bin_psx_trend", "cint_ord_psx_trend"),
+  MANIFESTMEANS = 0,
+  MANIFESTVAR = matrix(c(
+    0             , 0,
+    0             , 0),
+    2, 2, byrow = TRUE)
+)
+
+# Random effects = the trend factor's T0MEANS and CINT only (EAS default)
+psx_tpo_trend_mod$pars$indvarying <- psx_tpo_trend_mod$pars$param %in% c("T0m_bin_psx_trend", "T0m_ord_psx_trend", "cint_bin_psx_trend", "cint_ord_psx_trend")
+
+# TIpreds moderate the dynamic auto-effect(s) only
+eff <- paste0(c("zpos", "zneg", "zdis"), "_effect")
+psx_tpo_trend_mod$pars[, eff] <- FALSE
+psx_tpo_trend_mod$pars[psx_tpo_trend_mod$pars$matrix == "DRIFT" &
+               psx_tpo_trend_mod$pars$param %in% c("bin_psx_bin_psx", "ord_psx_ord_psx"), eff] <- TRUE
+
+psx_tpo_trend_mod$pars[psx_tpo_trend_mod$pars$indvarying | rowSums(psx_tpo_trend_mod$pars[, eff]) > 0,
+               c("matrix", "row", "col", "param", "indvarying", eff)]
+
+ctModelLatexHTML(psx_tpo_trend_mod)
+```
+
+#### Fit Model
 ```{r}
 #| eval: false
-zdis_ple_bin_cross <- plot_ribbon_multi(
-  psx_twopart_fit,
-  interaction  = "tip_zdis_auto_bin_psx_W",
-  times        = seq(0, 4, 0.05),
-  nsamp_use    = 200,
-  x_lab        = "Time (days)",
-  legend_title = "Disorganized Schitzotypy",
-  line_width   = 0.5,
-  bound_width  = 0.3
+ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine: outcome type changed to ordinal
+psx_tpo_trend_fit <- ctFit(
+  datalong = psx_tpo_trend_data,
+  model    = psx_tpo_trend_mod,
+  backend  = "julia",
+  optimcontrol = list(maxiter = 10000),
+  cores = 10, plot = FALSE, priors = TRUE
 )
-saveRDS(zdis_ple_bin_cross, "03_files/zdis_ple_bin_cross.rds")
+saveRDS(psx_tpo_trend_fit, "03_files/psx_tpo_trend_fit.Rds")
 beepr::beep(8)
 ```
 
 ```{r}
-zdis_ple_bin_cross <- readRDS("03_files/zdis_ple_bin_cross.rds")
-zdis_ple_bin_cross$plot
+psx_tpo_trend_fit <- readRDS("03_files/psx_tpo_trend_fit.Rds")
 ```
 
-:::callout-note
-Higher Dis-Z demosntrates slower decay, while lower Dis-Z demonstrates decay comparable to median levels of Dis-Z.
-:::
-
-### Continuous Cross-level Interaction
-#### Auto-Effect
-```{r}
-summary(psx_twopart_fit)$tipreds %>%
-  as.data.frame() %>%
-  tibble::rownames_to_column("param") %>%
-  filter(grepl("auto_con_psx_W", param)) %>%
-  select(param, mean, `2.5%`, `97.5%`) %>%
-  gt::gt()
-```
-
-:::callout-note
-Three significant cross-level interactions. 
-ZPOS and ZNEG associated with faster decay, and ZDIS associated with slower decay.
-:::
-
-#### ZPOS
+#### Posterior Predictive Check
 ```{r}
 #| eval: false
-zpos_ple_con_cross <- plot_ribbon_multi(
-  psx_twopart_fit,
-  interaction  = "tip_zpos_auto_con_psx_W",
-  times        = seq(0, 8, 0.05),
-  nsamp_use    = 200,
-  x_lab        = "Time (days)",
-  legend_title = "Positive Schitzotypy",
-  line_width   = 0.5,
-  bound_width  = 0.3
-)
-saveRDS(zpos_ple_con_cross, "03_files/zpos_ple_con_cross.rds")
-# beepr::beep(8)
-```
+psx_tpo_trend_fit <- ctGenerateFromFit(psx_tpo_trend_fit, nsamples = 100)
+pp_psx_tpo_trend <- ctPostPredPlots(psx_tpo_trend_fit)
+saveRDS(pp_psx_tpo_trend, "03_files/pp_psx_tpo_trend.rds")
 
-```{r}
-zpos_ple_con_cross <- readRDS("03_files/zpos_ple_con_cross.rds")
-zpos_ple_con_cross$plot
-```
-
-:::callout-note
-Low Pos-Z demonstrates slower decay, while high Pos-Z demonstrates faster decay.
-:::
-
-
-#### ZNEG
-```{r}
-#| eval: false
-zneg_ple_con_cross <- plot_ribbon_multi(
-  psx_twopart_fit,
-  interaction  = "tip_zneg_auto_con_psx_W",
-  times        = seq(0, 5, 0.05),
-  nsamp_use    = 200,
-  x_lab        = "Time (days)",
-  legend_title = "Negative Schitzotypy",
-  line_width   = 0.5,
-  bound_width  = 0.3
-)
-saveRDS(zneg_ple_con_cross, "03_files/zneg_ple_con_cross.rds")
+# observed vs model category proportions. Two-part PPC: a simulated magnitude
+# only counts where the MODEL's own occurrence is 1 (ctPostPredPlots instead
+# uses the observed occurrence pattern, which biases magnitude low).
+Y <- psx_tpo_trend_fit$generated$Y
+stopifnot(dim(Y)[2] == nrow(psx_tpo_trend_data))
+g_bin <- Y[, , "esm_psx_bin"]
+g_mag <- Y[, , "esm_psx_ord"]; g_mag[g_bin == 0] <- NA
+o_bin <- psx_tpo_trend_data$esm_psx_bin
+o_mag <- psx_tpo_trend_data$esm_psx_ord
+ptab <- function(o, g, v) full_join(
+  as.data.frame(prop.table(table(category = o)), responseName = "observed"),
+  as.data.frame(prop.table(table(category = round(g))), responseName = "model"),
+  by = "category") %>% mutate(variable = v, .before = 1)
+prop_psx_tpo_trend <- bind_rows(
+  ptab(o_bin, g_bin[, !is.na(o_bin)], "esm_psx_bin"),
+  ptab(o_mag, g_mag, "esm_psx_ord (given occurrence)"))
+# mean magnitude by day, same conditioning
+day <- floor(psx_tpo_trend_data$time_day)
+mean_psx_tpo_trend <- tibble(day = day, observed = o_mag,
+                     model = colMeans(g_mag, na.rm = TRUE)) %>%
+  group_by(day) %>%
+  summarise(observed = mean(observed, na.rm = TRUE), model = mean(model, na.rm = TRUE))
+saveRDS(mean_psx_tpo_trend, "03_files/mean_psx_tpo_trend.rds")
+saveRDS(prop_psx_tpo_trend, "03_files/prop_psx_tpo_trend.rds")
+rm(Y); psx_tpo_trend_fit$generated <- NULL; gc()   # free memory
 beepr::beep(8)
 ```
 
 ```{r}
-zneg_ple_con_cross <- readRDS("03_files/zneg_ple_con_cross.rds")
-zneg_ple_con_cross$plot
+pp_psx_tpo_trend <- readRDS("03_files/pp_psx_tpo_trend.rds")
+pp_psx_tpo_trend$Density
+pp_psx_tpo_trend$MeanTrajectory
+pp_psx_tpo_trend$LaggedCovariance_esm_psx_bin
+pp_psx_tpo_trend$LaggedCovariance_esm_psx_ord
+pp_psx_tpo_trend$SubjectLogLik
 ```
 
-:::callout-note
-Low Neg-Z demosntrates slower decay, while high Neg-Z demonstrates faster decay.
-:::
+##### Observed vs Model Proportions
+```{r}
+readRDS("03_files/prop_psx_tpo_trend.rds") %>%
+  gt::gt(groupname_col = "variable") %>%
+  gt::fmt_percent(columns = c(observed, model), decimals = 1)
+```
 
+```{r}
+readRDS("03_files/mean_psx_tpo_trend.rds") %>%
+  pivot_longer(-day, names_to = "source", values_to = "mean") %>%
+  ggplot(aes(day, mean, colour = source)) + geom_line() + geom_point() +
+  labs(x = "Study day", y = "Mean magnitude category (given occurrence)", colour = NULL) +
+  theme_bw()
+```
 
-#### ZDIS
+### TP-CENS-AUTO
+
+#### Model Specification
+```{r}
+psx_tp_trend_data <- p3_data %>%
+  group_by(id) %>%
+  mutate(time_day = time_day + (ave(time_day, time_day, FUN = seq_along) - 1) / 1440) %>%
+  ungroup() %>%
+  arrange(id, time_day) %>%
+  mutate(across(c(esm_psx_bin, esm_psx_con, zpos, zneg, zdis), as.numeric)) %>%
+  as.data.frame()
+
+psx_tp_trend_mod <- ctModel(
+  type = "ct", id = "id", time = "time_day",
+  manifestNames = c("esm_psx_bin", "esm_psx_con"),
+  latentNames   = c("bin_psx", "con_psx", "bin_psx_trend", "con_psx_trend"),
+  TIpredNames   = c("zpos", "zneg", "zdis"),
+  manifesttype  = c(1, 4),   # 0 continuous, 1 binary, 4 censored
+  censormin     = c(-Inf, min(psx_tp_trend_data$esm_psx_con, na.rm = TRUE)),
+  censormax     = c(Inf, Inf),
+  # each observed variable = dynamic process + trend factor
+  LAMBDA = cbind(diag(2), diag(2)),
+  # DRIFT -- dynamic auto-effects + slow trend drifts
+  DRIFT = matrix(c(
+    "bin_psx_bin_psx"    , 0                    , 0                    , 0,
+    0                    , "con_psx_con_psx"    , 0                    , 0,
+    0                    , 0                    , "drift_bin_psx_trend", 0,
+    0                    , 0                    , 0                    , "drift_con_psx_trend"),
+    4, 4, byrow = TRUE),
+  # DIFFUSION -- system noise on the dynamic process(es) only
+  DIFFUSION = matrix(c(
+    "diff_bin_psx", 0             , 0             , 0,
+    0             , "diff_con_psx", 0             , 0,
+    0             , 0             , 0             , 0,
+    0             , 0             , 0             , 0),
+    4, 4, byrow = TRUE),
+  # T0VAR -- first-beep deviations; trend starts come from random T0MEANS
+  T0VAR = matrix(c(
+    "T0var_bin_psx", 0              , 0              , 0,
+    0              , "T0var_con_psx", 0              , 0,
+    0              , 0              , 0              , 0,
+    0              , 0              , 0              , 0),
+    4, 4, byrow = TRUE),
+  T0MEANS = c(0, 0, "T0m_bin_psx_trend", "T0m_con_psx_trend"),
+  CINT    = c(0, 0, "cint_bin_psx_trend", "cint_con_psx_trend"),
+  MANIFESTMEANS = 0,
+  MANIFESTVAR = matrix(c(
+    0             , 0,
+    0             , "mvar_con_psx"),
+    2, 2, byrow = TRUE)
+)
+
+# Random effects = the trend factor's T0MEANS and CINT only (EAS default)
+psx_tp_trend_mod$pars$indvarying <- psx_tp_trend_mod$pars$param %in% c("T0m_bin_psx_trend", "T0m_con_psx_trend", "cint_bin_psx_trend", "cint_con_psx_trend")
+
+# TIpreds moderate the dynamic auto-effect(s) only
+eff <- paste0(c("zpos", "zneg", "zdis"), "_effect")
+psx_tp_trend_mod$pars[, eff] <- FALSE
+psx_tp_trend_mod$pars[psx_tp_trend_mod$pars$matrix == "DRIFT" &
+               psx_tp_trend_mod$pars$param %in% c("bin_psx_bin_psx", "con_psx_con_psx"), eff] <- TRUE
+
+psx_tp_trend_mod$pars[psx_tp_trend_mod$pars$indvarying | rowSums(psx_tp_trend_mod$pars[, eff]) > 0,
+               c("matrix", "row", "col", "param", "indvarying", eff)]
+
+ctModelLatexHTML(psx_tp_trend_mod)
+```
+
+#### Fit Model
 ```{r}
 #| eval: false
-zdis_ple_con_cross <- plot_ribbon_multi(
-  psx_twopart_fit,
-  interaction  = "tip_zdis_auto_con_psx_W",
-  times        = seq(0, 4, 0.05),
-  nsamp_use    = 200,
-  x_lab        = "Time (days)",
-  legend_title = "Disorganized Schitzotypy",
-  line_width   = 0.5,
-  bound_width  = 0.3
+ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine (cached per model shape)
+psx_tp_trend_fit <- ctFit(
+  datalong = psx_tp_trend_data,
+  model    = psx_tp_trend_mod,
+  backend  = "julia",
+  optimcontrol = list(maxiter = 10000),
+  cores = 10, plot = FALSE, priors = TRUE
 )
-saveRDS(zdis_ple_con_cross, "03_files/zdis_ple_con_cross.rds")
+saveRDS(psx_tp_trend_fit, "03_files/psx_tp_trend_fit.Rds")
 beepr::beep(8)
 ```
 
 ```{r}
-zdis_ple_con_cross <- readRDS("03_files/zdis_ple_con_cross.rds")
-zdis_ple_con_cross$plot
+psx_tp_trend_fit <- readRDS("03_files/psx_tp_trend_fit.Rds")
 ```
 
+#### Posterior Predictive Check
+```{r}
+#| eval: false
+psx_tp_trend_fit <- ctGenerateFromFit(psx_tp_trend_fit, nsamples = 100)
+pp_psx_tp_trend <- ctPostPredPlots(psx_tp_trend_fit)
+saveRDS(pp_psx_tp_trend, "03_files/pp_psx_tp_trend.rds")
+psx_tp_trend_fit$generated <- NULL; gc()   # free memory
+beepr::beep(8)
+```
+
+```{r}
+pp_psx_tp_trend <- readRDS("03_files/pp_psx_tp_trend.rds")
+pp_psx_tp_trend$Density
+pp_psx_tp_trend$MeanTrajectory
+pp_psx_tp_trend$LaggedCovariance_esm_psx_bin
+pp_psx_tp_trend$LaggedCovariance_esm_psx_con
+pp_psx_tp_trend$SubjectLogLik
+```
+
+### TP-CNT-AUTO
+
+#### Model Specification
+```{r}
+# count = raw (unscaled) magnitude - 1; the Standardize chunk may have
+# z-scored esm_psx_con, so take it from the saved data (same rows as p3_data)
+raw_con <- as.numeric(readRDS("data/p2_data.Rds")$esm_psx_con)
+stopifnot(length(raw_con) == nrow(p3_data),
+          all(raw_con[!is.na(raw_con)] >= 1),
+          all(raw_con[!is.na(raw_con)] == round(raw_con[!is.na(raw_con)])))  # whole numbers >= 1
+
+psx_tpc_trend_data <- p3_data %>%
+  mutate(esm_psx_cnt = raw_con - 1) %>%   # 0, 1, 2, ... ; NA when absent
+  group_by(id) %>%
+  mutate(time_day = time_day + (ave(time_day, time_day, FUN = seq_along) - 1) / 1440) %>%
+  ungroup() %>%
+  arrange(id, time_day) %>%
+  mutate(across(c(esm_psx_bin, esm_psx_cnt, zpos, zneg, zdis), as.numeric)) %>%
+  as.data.frame()
+
+psx_tpc_trend_mod <- ctModel(
+  type = "ct", id = "id", time = "time_day",
+  manifestNames = c("esm_psx_bin", "esm_psx_cnt"),
+  latentNames   = c("bin_psx", "cnt_psx", "bin_psx_trend", "cnt_psx_trend"),
+  TIpredNames   = c("zpos", "zneg", "zdis"),
+  manifesttype  = c(1, 3),   # binary, count (Poisson-lognormal)
+  # (censormin/censormax not needed: no censored variables here)
+  # each observed variable = dynamic process + trend factor
+  LAMBDA = cbind(diag(2), diag(2)),
+  # DRIFT -- dynamic auto-effects + slow trend drifts
+  DRIFT = matrix(c(
+    "bin_psx_bin_psx"    , 0                    , 0                    , 0,
+    0                    , "cnt_psx_cnt_psx"    , 0                    , 0,
+    0                    , 0                    , "drift_bin_psx_trend", 0,
+    0                    , 0                    , 0                    , "drift_cnt_psx_trend"),
+    4, 4, byrow = TRUE),
+  # DIFFUSION -- system noise on the dynamic process(es) only
+  DIFFUSION = matrix(c(
+    "diff_bin_psx", 0             , 0             , 0,
+    0             , "diff_cnt_psx", 0             , 0,
+    0             , 0             , 0             , 0,
+    0             , 0             , 0             , 0),
+    4, 4, byrow = TRUE),
+  # T0VAR -- first-beep deviations; trend starts come from random T0MEANS
+  T0VAR = matrix(c(
+    "T0var_bin_psx", 0              , 0              , 0,
+    0              , "T0var_cnt_psx", 0              , 0,
+    0              , 0              , 0              , 0,
+    0              , 0              , 0              , 0),
+    4, 4, byrow = TRUE),
+  T0MEANS = c(0, 0, "T0m_bin_psx_trend", "T0m_cnt_psx_trend"),
+  CINT    = c(0, 0, "cint_bin_psx_trend", "cint_cnt_psx_trend"),
+  MANIFESTMEANS = 0,
+  MANIFESTVAR = matrix(c(
+    0             , 0,
+    0             , "mvar_cnt_psx"),
+    2, 2, byrow = TRUE)
+)
+
+# Random effects = the trend factor's T0MEANS and CINT only (EAS default)
+psx_tpc_trend_mod$pars$indvarying <- psx_tpc_trend_mod$pars$param %in% c("T0m_bin_psx_trend", "T0m_cnt_psx_trend", "cint_bin_psx_trend", "cint_cnt_psx_trend")
+
+# TIpreds moderate the dynamic auto-effect(s) only
+eff <- paste0(c("zpos", "zneg", "zdis"), "_effect")
+psx_tpc_trend_mod$pars[, eff] <- FALSE
+psx_tpc_trend_mod$pars[psx_tpc_trend_mod$pars$matrix == "DRIFT" &
+               psx_tpc_trend_mod$pars$param %in% c("bin_psx_bin_psx", "cnt_psx_cnt_psx"), eff] <- TRUE
+
+psx_tpc_trend_mod$pars[psx_tpc_trend_mod$pars$indvarying | rowSums(psx_tpc_trend_mod$pars[, eff]) > 0,
+               c("matrix", "row", "col", "param", "indvarying", eff)]
+
+ctModelLatexHTML(psx_tpc_trend_mod)
+```
+
+#### Fit Model
+```{r}
+#| eval: false
+ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine: outcome type changed to count
+psx_tpc_trend_fit <- ctFit(
+  datalong = psx_tpc_trend_data,
+  model    = psx_tpc_trend_mod,
+  backend  = "julia",
+  optimcontrol = list(maxiter = 10000),
+  cores = 10, plot = FALSE, priors = TRUE
+)
+saveRDS(psx_tpc_trend_fit, "03_files/psx_tpc_trend_fit.Rds")
+beepr::beep(8)
+```
+
+```{r}
+psx_tpc_trend_fit <- readRDS("03_files/psx_tpc_trend_fit.Rds")
+```
+
+#### Posterior Predictive Check
+```{r}
+#| eval: false
+psx_tpc_trend_fit <- ctGenerateFromFit(psx_tpc_trend_fit, nsamples = 100)
+pp_psx_tpc_trend <- ctPostPredPlots(psx_tpc_trend_fit)
+saveRDS(pp_psx_tpc_trend, "03_files/pp_psx_tpc_trend.rds")
+psx_tpc_trend_fit$generated <- NULL; gc()   # free memory
+beepr::beep(8)
+```
+
+```{r}
+pp_psx_tpc_trend <- readRDS("03_files/pp_psx_tpc_trend.rds")
+pp_psx_tpc_trend$Density
+pp_psx_tpc_trend$MeanTrajectory
+pp_psx_tpc_trend$LaggedCovariance_esm_psx_bin
+pp_psx_tpc_trend$LaggedCovariance_esm_psx_cnt
+pp_psx_tpc_trend$SubjectLogLik
+```
+
+### TP-AUTO-EVER
+
 :::callout-note
-High Dis-Z demosntrates slower decay, while low Dis-Z demonstrates faster decay.
+TP-ORD-LINK-AUTO refitted without the participants who never reported PSX (37 of 203). Those
+participants produce the step at the right end of TP-AUTO's `SubjectLogLik` plot; if the
+dynamics and moderation effects barely change without them, they are not driving the results.
 :::
+
+#### Fit Model
+```{r}
+#| eval: false
+ever_ids <- psx_tpo2_data %>% group_by(id) %>%
+  filter(any(esm_psx_bin == 1, na.rm = TRUE)) %>% pull(id) %>% unique()
+psx_tpo2_ever_data <- psx_tpo2_data %>% filter(id %in% ever_ids)
+
+psx_tpo2_ever_fit <- ctFit(
+  datalong = psx_tpo2_ever_data,
+  model    = psx_tpo2_mod,
+  backend  = "julia",
+  optimcontrol = list(maxiter = 10000),
+  cores = 10, plot = FALSE, priors = TRUE
+)
+saveRDS(psx_tpo2_ever_fit, "03_files/psx_tpo2_ever_fit.Rds")
+beepr::beep(8)
+
+psx_tpo2_ever_fit <- ctGenerateFromFit(psx_tpo2_ever_fit, nsamples = 100)
+pp_psx_tpo2_ever <- ctPostPredPlots(psx_tpo2_ever_fit)
+saveRDS(pp_psx_tpo2_ever, "03_files/pp_psx_tpo2_ever.rds")
+psx_tpo2_ever_fit$generated <- NULL; gc()   # free memory
+beepr::beep(8)
+```
+
+```{r}
+psx_tpo2_ever_fit <- readRDS("03_files/psx_tpo2_ever_fit.Rds")
+pp_psx_tpo2_ever  <- readRDS("03_files/pp_psx_tpo2_ever.rds")
+pp_psx_tpo2_ever$SubjectLogLik
+```
+
+#### Comparison with TP-ORD-LINK-AUTO
+```{r}
+cmp_pars <- function(fit) {
+  s <- summary(fit)
+  keep <- c("mean", "2.5%", "97.5%")
+  rbind(as.data.frame(s$popmeans)[, keep], as.data.frame(s$tipreds)[, keep]) %>%
+    tibble::rownames_to_column("param")
+}
+full_join(cmp_pars(psx_tpo2_fit), cmp_pars(psx_tpo2_ever_fit),
+          by = "param", suffix = c("_all", "_ever")) %>%
+  filter(grepl("_psx_|^tip_", param)) %>%
+  gt::gt() %>%
+  gt::fmt_number(columns = -param, decimals = 3)
+```
+
+### TP-PSIT
+
+#### Model Specification
+```{r}
+psx_sit_tp_data <- p3_data %>%
+  group_by(id) %>%
+  mutate(time_day = time_day + (ave(time_day, time_day, FUN = seq_along) - 1) / 1440) %>%
+  ungroup() %>%
+  arrange(id, time_day) %>%
+  mutate(across(c(esm_psx_bin, esm_psx_con, esm24, zpos, zneg, zdis), as.numeric)) %>%
+  as.data.frame()
+
+table(psx_sit_tp_data$esm_psx_bin, useNA = "ifany")   # binary part must be 0/1
+
+psx_sit_tp_mod <- ctModel(
+  type = "ct", id = "id", time = "time_day",
+  manifestNames = c("esm_psx_bin", "esm_psx_con", "esm24"),
+  latentNames   = c("bin_psx", "con_psx", "psit", "bin_psx_trend", "con_psx_trend", "psit_trend"),
+  TIpredNames   = c("zpos", "zneg", "zdis"),
+  manifesttype  = c(1, 4, 0),                        # binary, censored, continuous
+  censormin     = c(-Inf, min(psx_sit_tp_data$esm_psx_con, na.rm = TRUE), -Inf),
+  censormax     = c(Inf, Inf, Inf),
+  # each observed variable = dynamic process + trend factor
+  LAMBDA = cbind(diag(3), diag(3)),
+  # DRIFT -- labels are predictor_outcome (psit_bin_psx = psit -> bin_psx)
+  DRIFT = matrix(c(
+    "bin_psx_bin_psx"    , 0                    , "psit_bin_psx"       , 0                    , 0                    , 0                    ,
+    0                    , "con_psx_con_psx"    , "psit_con_psx"       , 0                    , 0                    , 0                    ,
+    "bin_psx_psit"       , "con_psx_psit"       , "psit_psit"          , 0                    , 0                    , 0                    ,
+    0                    , 0                    , 0                    , "drift_bin_psx_trend", 0                    , 0                    ,
+    0                    , 0                    , 0                    , 0                    , "drift_con_psx_trend", 0                    ,
+    0                    , 0                    , 0                    , 0                    , 0                    , "drift_psit_trend"),
+    6, 6, byrow = TRUE),
+  # DIFFUSION -- system noise (full covariance) on the dynamic processes only
+  DIFFUSION = matrix(c(
+    "diff_bin_psx"        , 0                     , 0                     , 0                     , 0                     , 0                     ,
+    "diff_bin_psx_con_psx", "diff_con_psx"        , 0                     , 0                     , 0                     , 0                     ,
+    "diff_bin_psx_psit"   , "diff_con_psx_psit"   , "diff_psit"           , 0                     , 0                     , 0                     ,
+    0                     , 0                     , 0                     , 0                     , 0                     , 0                     ,
+    0                     , 0                     , 0                     , 0                     , 0                     , 0                     ,
+    0                     , 0                     , 0                     , 0                     , 0                     , 0),
+    6, 6, byrow = TRUE),
+  # T0VAR -- first-beep deviations; trend starts come from random T0MEANS
+  T0VAR = matrix(c(
+    "T0var_bin_psx"        , 0                      , 0                      , 0                      , 0                      , 0                      ,
+    "T0var_bin_psx_con_psx", "T0var_con_psx"        , 0                      , 0                      , 0                      , 0                      ,
+    "T0var_bin_psx_psit"   , "T0var_con_psx_psit"   , "T0var_psit"           , 0                      , 0                      , 0                      ,
+    0                      , 0                      , 0                      , 0                      , 0                      , 0                      ,
+    0                      , 0                      , 0                      , 0                      , 0                      , 0                      ,
+    0                      , 0                      , 0                      , 0                      , 0                      , 0),
+    6, 6, byrow = TRUE),
+  T0MEANS = c(0, 0, 0, "T0m_bin_psx_trend", "T0m_con_psx_trend", "T0m_psit_trend"),
+  CINT    = c(0, 0, 0, "cint_bin_psx_trend", "cint_con_psx_trend", "cint_psit_trend"),
+  MANIFESTMEANS = 0,
+  # binary part: no measurement error (the link carries it)
+  MANIFESTVAR = matrix(c(
+    0, 0,          0,
+    0, "mvar_con_psx", 0,
+    0, 0,          "mvar_psit"), 3, 3, byrow = TRUE)
+)
+
+# Random effects = the trend factors' T0MEANS and CINT only (EAS default)
+psx_sit_tp_mod$pars$indvarying <- psx_sit_tp_mod$pars$param %in%
+  c("T0m_bin_psx_trend", "T0m_con_psx_trend", "T0m_psit_trend",
+    "cint_bin_psx_trend", "cint_con_psx_trend", "cint_psit_trend")
+
+# TIpreds moderate the seven dynamic DRIFT cells (auto- and cross-effects) only
+eff <- paste0(c("zpos", "zneg", "zdis"), "_effect")
+psx_sit_tp_mod$pars[, eff] <- FALSE
+psx_sit_tp_mod$pars[psx_sit_tp_mod$pars$matrix == "DRIFT" &
+               psx_sit_tp_mod$pars$param %in% c("bin_psx_bin_psx", "con_psx_con_psx", "psit_psit", "psit_bin_psx", "psit_con_psx", "bin_psx_psit", "con_psx_psit"), eff] <- TRUE
+
+psx_sit_tp_mod$pars[psx_sit_tp_mod$pars$indvarying | rowSums(psx_sit_tp_mod$pars[, eff]) > 0,
+               c("matrix", "row", "col", "param", "indvarying", eff)]
+
+ctModelLatexHTML(psx_sit_tp_mod)
+```
+
+#### Fit Model
+```{r}
+#| eval: false
+ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine (cached per model shape)
+psx_sit_tp_fit <- ctFit(
+  datalong = psx_sit_tp_data,
+  model    = psx_sit_tp_mod,
+  backend  = "julia",
+  optimcontrol = list(maxiter = 10000),
+  cores = 10, plot = FALSE, priors = TRUE
+)
+saveRDS(psx_sit_tp_fit, "03_files/psx_sit_tp_fit.Rds")
+beepr::beep(8)
+```
+
+```{r}
+psx_sit_tp_fit <- readRDS("03_files/psx_sit_tp_fit.Rds")
+```
+
+#### Posterior Predictive Check
+```{r}
+#| eval: false
+psx_sit_tp_fit <- ctGenerateFromFit(psx_sit_tp_fit, nsamples = 100)
+pp_psx_sit_tp <- ctPostPredPlots(psx_sit_tp_fit)
+saveRDS(pp_psx_sit_tp, "03_files/pp_psx_sit_tp.rds")
+
+# two-part check: magnitude only where the MODEL's own occurrence = 1
+tpc_psx_sit_tp <- ct_tp_ppc(psx_sit_tp_fit, psx_sit_tp_data, "esm_psx_bin", "esm_psx_con",
+  breaks = c(-Inf, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 9.5, 12.5, Inf),
+  labels = c("1", "2", "3", "4", "5", "6", "7-9", "10-12", "13+"))
+saveRDS(tpc_psx_sit_tp, "03_files/tpc_psx_sit_tp.rds")
+psx_sit_tp_fit$generated <- NULL; gc()   # free memory
+beepr::beep(8)
+```
+
+```{r}
+pp_psx_sit_tp <- readRDS("03_files/pp_psx_sit_tp.rds")
+pp_psx_sit_tp$Density
+pp_psx_sit_tp$MeanTrajectory
+pp_psx_sit_tp$LaggedCovariance_esm_psx_bin
+pp_psx_sit_tp$LaggedCovariance_esm_psx_con
+pp_psx_sit_tp$LaggedCovariance_esm24
+pp_psx_sit_tp$SubjectLogLik
+```
+
+#### Results Table
+```{r}
+ct_sig_table(psx_sit_tp_fit)
+```
+
+### TP-ORD-PSIT
+
+#### Model Specification
+```{r}
+# ordinal magnitude from the raw (unscaled) esm_psx_con: 9 categories
+raw_con <- as.numeric(readRDS("data/p2_data.Rds")$esm_psx_con)
+stopifnot(length(raw_con) == nrow(p3_data), all(raw_con[!is.na(raw_con)] >= 1))
+ord_breaks <- c(0, 1, 2, 3, 4, 5, 6, 9, 12, Inf)   # 1,2,3,4,5,6,7-9,10-12,13+
+
+psx_sit_tpo_data <- p3_data %>%
+  mutate(esm_psx_ord = as.numeric(cut(raw_con, breaks = ord_breaks, labels = FALSE))) %>%  # 1..9, NA when absent
+  group_by(id) %>%
+  mutate(time_day = time_day + (ave(time_day, time_day, FUN = seq_along) - 1) / 1440) %>%
+  ungroup() %>%
+  arrange(id, time_day) %>%
+  mutate(across(c(esm_psx_bin, esm_psx_ord, esm24, zpos, zneg, zdis), as.numeric)) %>%
+  as.data.frame()
+
+table(psx_sit_tpo_data$esm_psx_bin, useNA = "ifany")   # binary part must be 0/1
+
+psx_sit_tpo_mod <- ctModel(
+  type = "ct", id = "id", time = "time_day",
+  manifestNames = c("esm_psx_bin", "esm_psx_ord", "esm24"),
+  latentNames   = c("bin_psx", "ord_psx", "psit", "bin_psx_trend", "ord_psx_trend", "psit_trend"),
+  TIpredNames   = c("zpos", "zneg", "zdis"),
+  manifesttype  = c(1, 2, 0),   # binary, ordinal, continuous
+  ncategories   = c(0, 9, 0),
+  # each observed variable = dynamic process + trend factor
+  LAMBDA = cbind(diag(3), diag(3)),
+  # DRIFT -- labels are predictor_outcome (psit_bin_psx = psit -> bin_psx)
+  DRIFT = matrix(c(
+    "bin_psx_bin_psx"    , 0                    , "psit_bin_psx"       , 0                    , 0                    , 0                    ,
+    0                    , "ord_psx_ord_psx"    , "psit_ord_psx"       , 0                    , 0                    , 0                    ,
+    "bin_psx_psit"       , "ord_psx_psit"       , "psit_psit"          , 0                    , 0                    , 0                    ,
+    0                    , 0                    , 0                    , "drift_bin_psx_trend", 0                    , 0                    ,
+    0                    , 0                    , 0                    , 0                    , "drift_ord_psx_trend", 0                    ,
+    0                    , 0                    , 0                    , 0                    , 0                    , "drift_psit_trend"),
+    6, 6, byrow = TRUE),
+  # DIFFUSION -- system noise (full covariance) on the dynamic processes only
+  DIFFUSION = matrix(c(
+    "diff_bin_psx"        , 0                     , 0                     , 0                     , 0                     , 0                     ,
+    "diff_bin_psx_ord_psx", "diff_ord_psx"        , 0                     , 0                     , 0                     , 0                     ,
+    "diff_bin_psx_psit"   , "diff_ord_psx_psit"   , "diff_psit"           , 0                     , 0                     , 0                     ,
+    0                     , 0                     , 0                     , 0                     , 0                     , 0                     ,
+    0                     , 0                     , 0                     , 0                     , 0                     , 0                     ,
+    0                     , 0                     , 0                     , 0                     , 0                     , 0),
+    6, 6, byrow = TRUE),
+  # T0VAR -- first-beep deviations; trend starts come from random T0MEANS
+  T0VAR = matrix(c(
+    "T0var_bin_psx"        , 0                      , 0                      , 0                      , 0                      , 0                      ,
+    "T0var_bin_psx_ord_psx", "T0var_ord_psx"        , 0                      , 0                      , 0                      , 0                      ,
+    "T0var_bin_psx_psit"   , "T0var_ord_psx_psit"   , "T0var_psit"           , 0                      , 0                      , 0                      ,
+    0                      , 0                      , 0                      , 0                      , 0                      , 0                      ,
+    0                      , 0                      , 0                      , 0                      , 0                      , 0                      ,
+    0                      , 0                      , 0                      , 0                      , 0                      , 0),
+    6, 6, byrow = TRUE),
+  T0MEANS = c(0, 0, 0, "T0m_bin_psx_trend", "T0m_ord_psx_trend", "T0m_psit_trend"),
+  CINT    = c(0, 0, 0, "cint_bin_psx_trend", "cint_ord_psx_trend", "cint_psit_trend"),
+  MANIFESTMEANS = 0,
+  # binary + ordinal parts: no measurement error (the links carry it)
+  MANIFESTVAR = matrix(c(
+    0, 0,          0,
+    0, 0,          0,
+    0, 0,          "mvar_psit"), 3, 3, byrow = TRUE)
+)
+
+# Random effects = the trend factors' T0MEANS and CINT only (EAS default)
+psx_sit_tpo_mod$pars$indvarying <- psx_sit_tpo_mod$pars$param %in%
+  c("T0m_bin_psx_trend", "T0m_ord_psx_trend", "T0m_psit_trend",
+    "cint_bin_psx_trend", "cint_ord_psx_trend", "cint_psit_trend")
+
+# TIpreds moderate the seven dynamic DRIFT cells (auto- and cross-effects) only
+eff <- paste0(c("zpos", "zneg", "zdis"), "_effect")
+psx_sit_tpo_mod$pars[, eff] <- FALSE
+psx_sit_tpo_mod$pars[psx_sit_tpo_mod$pars$matrix == "DRIFT" &
+               psx_sit_tpo_mod$pars$param %in% c("bin_psx_bin_psx", "ord_psx_ord_psx", "psit_psit", "psit_bin_psx", "psit_ord_psx", "bin_psx_psit", "ord_psx_psit"), eff] <- TRUE
+
+psx_sit_tpo_mod$pars[psx_sit_tpo_mod$pars$indvarying | rowSums(psx_sit_tpo_mod$pars[, eff]) > 0,
+               c("matrix", "row", "col", "param", "indvarying", eff)]
+
+ctModelLatexHTML(psx_sit_tpo_mod)
+```
+
+#### Fit Model
+```{r}
+#| eval: false
+ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine (cached per model shape)
+psx_sit_tpo_fit <- ctFit(
+  datalong = psx_sit_tpo_data,
+  model    = psx_sit_tpo_mod,
+  backend  = "julia",
+  optimcontrol = list(maxiter = 10000),
+  cores = 10, plot = FALSE, priors = TRUE
+)
+saveRDS(psx_sit_tpo_fit, "03_files/psx_sit_tpo_fit.Rds")
+beepr::beep(8)
+```
+
+```{r}
+psx_sit_tpo_fit <- readRDS("03_files/psx_sit_tpo_fit.Rds")
+```
+
+#### Posterior Predictive Check
+```{r}
+#| eval: false
+psx_sit_tpo_fit <- ctGenerateFromFit(psx_sit_tpo_fit, nsamples = 100)
+pp_psx_sit_tpo <- ctPostPredPlots(psx_sit_tpo_fit)
+saveRDS(pp_psx_sit_tpo, "03_files/pp_psx_sit_tpo.rds")
+
+# two-part check: magnitude only where the MODEL's own occurrence = 1
+tpc_psx_sit_tpo <- ct_tp_ppc(psx_sit_tpo_fit, psx_sit_tpo_data, "esm_psx_bin", "esm_psx_ord",
+  breaks = NULL)
+saveRDS(tpc_psx_sit_tpo, "03_files/tpc_psx_sit_tpo.rds")
+psx_sit_tpo_fit$generated <- NULL; gc()   # free memory
+beepr::beep(8)
+```
+
+```{r}
+pp_psx_sit_tpo <- readRDS("03_files/pp_psx_sit_tpo.rds")
+pp_psx_sit_tpo$Density
+pp_psx_sit_tpo$MeanTrajectory
+pp_psx_sit_tpo$LaggedCovariance_esm_psx_bin
+pp_psx_sit_tpo$LaggedCovariance_esm_psx_ord
+pp_psx_sit_tpo$LaggedCovariance_esm24
+pp_psx_sit_tpo$SubjectLogLik
+```
+
+##### Two-Part Check
+```{r}
+tpc_psx_sit_tpo <- readRDS("03_files/tpc_psx_sit_tpo.rds")
+tpc_psx_sit_tpo$prop %>%
+  gt::gt(groupname_col = "variable") %>%
+  gt::fmt_percent(columns = c(observed, model), decimals = 1)
+tpc_psx_sit_tpo$plot
+```
+
+#### Results Table
+```{r}
+ct_sig_table(psx_sit_tpo_fit)
+```
+
+### TP-SSIT
+
+#### Model Specification
+```{r}
+psx_str_tp_data <- p3_data %>%
+  group_by(id) %>%
+  mutate(time_day = time_day + (ave(time_day, time_day, FUN = seq_along) - 1) / 1440) %>%
+  ungroup() %>%
+  arrange(id, time_day) %>%
+  mutate(across(c(esm_psx_bin, esm_psx_con, esm25, zpos, zneg, zdis), as.numeric)) %>%
+  as.data.frame()
+
+table(psx_str_tp_data$esm_psx_bin, useNA = "ifany")   # binary part must be 0/1
+
+psx_str_tp_mod <- ctModel(
+  type = "ct", id = "id", time = "time_day",
+  manifestNames = c("esm_psx_bin", "esm_psx_con", "esm25"),
+  latentNames   = c("bin_psx", "con_psx", "ssit", "bin_psx_trend", "con_psx_trend", "ssit_trend"),
+  TIpredNames   = c("zpos", "zneg", "zdis"),
+  manifesttype  = c(1, 4, 0),                        # binary, censored, continuous
+  censormin     = c(-Inf, min(psx_str_tp_data$esm_psx_con, na.rm = TRUE), -Inf),
+  censormax     = c(Inf, Inf, Inf),
+  # each observed variable = dynamic process + trend factor
+  LAMBDA = cbind(diag(3), diag(3)),
+  # DRIFT -- labels are predictor_outcome (ssit_bin_psx = ssit -> bin_psx)
+  DRIFT = matrix(c(
+    "bin_psx_bin_psx"    , 0                    , "ssit_bin_psx"       , 0                    , 0                    , 0                    ,
+    0                    , "con_psx_con_psx"    , "ssit_con_psx"       , 0                    , 0                    , 0                    ,
+    "bin_psx_ssit"       , "con_psx_ssit"       , "ssit_ssit"          , 0                    , 0                    , 0                    ,
+    0                    , 0                    , 0                    , "drift_bin_psx_trend", 0                    , 0                    ,
+    0                    , 0                    , 0                    , 0                    , "drift_con_psx_trend", 0                    ,
+    0                    , 0                    , 0                    , 0                    , 0                    , "drift_ssit_trend"),
+    6, 6, byrow = TRUE),
+  # DIFFUSION -- system noise (full covariance) on the dynamic processes only
+  DIFFUSION = matrix(c(
+    "diff_bin_psx"        , 0                     , 0                     , 0                     , 0                     , 0                     ,
+    "diff_bin_psx_con_psx", "diff_con_psx"        , 0                     , 0                     , 0                     , 0                     ,
+    "diff_bin_psx_ssit"   , "diff_con_psx_ssit"   , "diff_ssit"           , 0                     , 0                     , 0                     ,
+    0                     , 0                     , 0                     , 0                     , 0                     , 0                     ,
+    0                     , 0                     , 0                     , 0                     , 0                     , 0                     ,
+    0                     , 0                     , 0                     , 0                     , 0                     , 0),
+    6, 6, byrow = TRUE),
+  # T0VAR -- first-beep deviations; trend starts come from random T0MEANS
+  T0VAR = matrix(c(
+    "T0var_bin_psx"        , 0                      , 0                      , 0                      , 0                      , 0                      ,
+    "T0var_bin_psx_con_psx", "T0var_con_psx"        , 0                      , 0                      , 0                      , 0                      ,
+    "T0var_bin_psx_ssit"   , "T0var_con_psx_ssit"   , "T0var_ssit"           , 0                      , 0                      , 0                      ,
+    0                      , 0                      , 0                      , 0                      , 0                      , 0                      ,
+    0                      , 0                      , 0                      , 0                      , 0                      , 0                      ,
+    0                      , 0                      , 0                      , 0                      , 0                      , 0),
+    6, 6, byrow = TRUE),
+  T0MEANS = c(0, 0, 0, "T0m_bin_psx_trend", "T0m_con_psx_trend", "T0m_ssit_trend"),
+  CINT    = c(0, 0, 0, "cint_bin_psx_trend", "cint_con_psx_trend", "cint_ssit_trend"),
+  MANIFESTMEANS = 0,
+  # binary part: no measurement error (the link carries it)
+  MANIFESTVAR = matrix(c(
+    0, 0,          0,
+    0, "mvar_con_psx", 0,
+    0, 0,          "mvar_ssit"), 3, 3, byrow = TRUE)
+)
+
+# Random effects = the trend factors' T0MEANS and CINT only (EAS default)
+psx_str_tp_mod$pars$indvarying <- psx_str_tp_mod$pars$param %in%
+  c("T0m_bin_psx_trend", "T0m_con_psx_trend", "T0m_ssit_trend",
+    "cint_bin_psx_trend", "cint_con_psx_trend", "cint_ssit_trend")
+
+# TIpreds moderate the seven dynamic DRIFT cells (auto- and cross-effects) only
+eff <- paste0(c("zpos", "zneg", "zdis"), "_effect")
+psx_str_tp_mod$pars[, eff] <- FALSE
+psx_str_tp_mod$pars[psx_str_tp_mod$pars$matrix == "DRIFT" &
+               psx_str_tp_mod$pars$param %in% c("bin_psx_bin_psx", "con_psx_con_psx", "ssit_ssit", "ssit_bin_psx", "ssit_con_psx", "bin_psx_ssit", "con_psx_ssit"), eff] <- TRUE
+
+psx_str_tp_mod$pars[psx_str_tp_mod$pars$indvarying | rowSums(psx_str_tp_mod$pars[, eff]) > 0,
+               c("matrix", "row", "col", "param", "indvarying", eff)]
+
+ctModelLatexHTML(psx_str_tp_mod)
+```
+
+#### Fit Model
+```{r}
+#| eval: false
+ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine (cached per model shape)
+psx_str_tp_fit <- ctFit(
+  datalong = psx_str_tp_data,
+  model    = psx_str_tp_mod,
+  backend  = "julia",
+  optimcontrol = list(maxiter = 10000),
+  cores = 10, plot = FALSE, priors = TRUE
+)
+saveRDS(psx_str_tp_fit, "03_files/psx_str_tp_fit.Rds")
+beepr::beep(8)
+```
+
+```{r}
+psx_str_tp_fit <- readRDS("03_files/psx_str_tp_fit.Rds")
+```
+
+#### Posterior Predictive Check
+```{r}
+#| eval: false
+psx_str_tp_fit <- ctGenerateFromFit(psx_str_tp_fit, nsamples = 100)
+pp_psx_str_tp <- ctPostPredPlots(psx_str_tp_fit)
+saveRDS(pp_psx_str_tp, "03_files/pp_psx_str_tp.rds")
+
+# two-part check: magnitude only where the MODEL's own occurrence = 1
+tpc_psx_str_tp <- ct_tp_ppc(psx_str_tp_fit, psx_str_tp_data, "esm_psx_bin", "esm_psx_con",
+  breaks = c(-Inf, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 9.5, 12.5, Inf),
+  labels = c("1", "2", "3", "4", "5", "6", "7-9", "10-12", "13+"))
+saveRDS(tpc_psx_str_tp, "03_files/tpc_psx_str_tp.rds")
+psx_str_tp_fit$generated <- NULL; gc()   # free memory
+beepr::beep(8)
+```
+
+```{r}
+pp_psx_str_tp <- readRDS("03_files/pp_psx_str_tp.rds")
+pp_psx_str_tp$Density
+pp_psx_str_tp$MeanTrajectory
+pp_psx_str_tp$LaggedCovariance_esm_psx_bin
+pp_psx_str_tp$LaggedCovariance_esm_psx_con
+pp_psx_str_tp$LaggedCovariance_esm25
+pp_psx_str_tp$SubjectLogLik
+```
+
+#### Results Table
+```{r}
+ct_sig_table(psx_str_tp_fit)
+```
