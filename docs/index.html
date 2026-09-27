@@ -164,6 +164,10 @@ ul.task-list li input[type="checkbox"] {
   <ul class="collapse">
   <li><a href="#how-to-navigate-this-website" id="toc-how-to-navigate-this-website" class="nav-link" data-scroll-target="#how-to-navigate-this-website">How to navigate this website?</a></li>
   <li><a href="#how-does-this-website-work" id="toc-how-does-this-website-work" class="nav-link" data-scroll-target="#how-does-this-website-work">How does this website work?</a></li>
+  <li><a href="#changelog" id="toc-changelog" class="nav-link" data-scroll-target="#changelog">Changelog</a>
+  <ul class="collapse">
+  <li><a href="#section" id="toc-section" class="nav-link" data-scroll-target="#section">09.26.26</a></li>
+  </ul></li>
   </ul></li>
   </ul>
 </nav>
@@ -217,7 +221,6 @@ Important
 <p>All code and data are processed locally on a personal computer. At no time is data stored on GitHub, even temporarily.</p>
 </div>
 </div>
-<p>This website documents the data preparation and analysis for XXXX.</p>
 <section id="how-to-navigate-this-website" class="level2">
 <h2 class="anchored" data-anchor-id="how-to-navigate-this-website">How to navigate this website?</h2>
 <ol type="1">
@@ -232,8 +235,26 @@ Important
 <li>Each phase is separated by its own R script file (<code>.qmd</code> file)</li>
 <li>Thus, each R script <em>chapter</em> reflects the actual underlying code used to clean and analyze data.</li>
 </ol>
+</section>
+<section id="changelog" class="level2">
+<h2 class="anchored" data-anchor-id="changelog">Changelog</h2>
+<section id="section" class="level3">
+<h3 class="anchored" data-anchor-id="section">09.26.26</h3>
+<ul>
+<li>Cleaned up code
+<ul>
+<li>Now code is hidden in tab, you just need to “click” to view.</li>
+<li>Added more notes to explain model specification.</li>
+</ul></li>
+<li>Revised models to be synonymous to a RDSEM (i.e., we allowed for the overall detrend of variables).</li>
+<li>Added VAR models using Positive and Stressful Situations.</li>
+<li>Ran sensitivity models for <code>03_PLE</code></li>
+<li>Added visual sensitivity for <code>PLX</code> composite score by MSS subscales.</li>
+<li>Added visuals for Positive and Stressful Situation items.</li>
+</ul>
 
 
+</section>
 </section>
 </section>
 

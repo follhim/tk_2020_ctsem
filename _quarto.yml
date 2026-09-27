@@ -21,6 +21,8 @@ format:
       - cosmo
       - brand
     lightbox: auto
+    code-fold: true
+    code-summary: "Click to View"
 
 
 

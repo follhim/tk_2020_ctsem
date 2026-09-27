@@ -319,6 +319,71 @@ bar_pct(p1_data, esm_psx_con) +
   patchwork::plot_layout(widths = c(1, 2))
 ```
 
+## Sensitivity Check
+### PLX by MSS
+```{r}
+blue_red <- c("#2166AC", "#67A9CF", "#EF8A62", "#B2182B")
+
+p1_data %>%
+  pivot_longer(c(zpos, zneg, zdis), names_to = "scale", values_to = "z") %>%
+  filter(!is.na(z), !is.na(esm_psx_sum)) %>%
+  group_by(scale, esm_psx_sum) %>%
+  arrange(z, .by_group = TRUE) %>%          # low z at bottom, high z at top
+  mutate(pos = row_number() - 0.5) %>%      # stack position within each bar
+  ungroup() %>%
+  ggplot(aes(esm_psx_sum, pos, fill = z)) +
+  geom_tile(width = 0.9, height = 1) +
+  scale_fill_gradientn(colours = blue_red, name = "z") +
+  facet_wrap(~ scale) +
+  labs(x = "PSX sum score", y = "Count") +
+  theme_minimal() +
+  theme(panel.grid.minor = element_blank())
+```
+
+:::callout-note
+This is raw count, and colored based on their values of MSS. It's hard to see what's happening, so I tried to do a proportion instead. The values on the top of each bar represent the # of total responses for that value.
+:::
+
+```{r}
+library(tidyverse)
+
+blue_red <- c("#2166AC", "#67A9CF", "#EF8A62", "#B2182B")
+
+plot_prop <- function(data, zvar) {
+  plot_df <- data %>%
+    filter(!is.na(.data[[zvar]]), !is.na(esm_psx_sum)) %>%
+    mutate(z = .data[[zvar]]) %>%
+    group_by(esm_psx_sum) %>%
+    arrange(z, .by_group = TRUE) %>%
+    mutate(n_bar = n(),
+           pos   = (row_number() - 0.5) / n_bar) %>%
+    ungroup()
+
+  bar_n <- plot_df %>% distinct(esm_psx_sum, n_bar)
+
+  ggplot(plot_df, aes(esm_psx_sum, pos, fill = z)) +
+    geom_tile(aes(height = 1 / n_bar), width = 0.9) +
+    geom_text(data = bar_n, aes(esm_psx_sum, 1.03, label = n_bar),
+              inherit.aes = FALSE, size = 2.5, angle = 90, hjust = 0) +
+    scale_fill_gradientn(colours = blue_red, name = zvar) +
+    scale_y_continuous(labels = scales::percent, breaks = seq(0, 1, .25),
+                       expand = expansion(mult = c(0, .08))) +
+    labs(title = zvar, x = "PSX sum score", y = "Proportion within sum score") +
+    theme_minimal() +
+    theme(panel.grid.minor = element_blank())
+}
+
+p_pos <- plot_prop(p1_data, "zpos")
+p_neg <- plot_prop(p1_data, "zneg")
+p_dis <- plot_prop(p1_data, "zdis")
+
+p_pos
+p_neg
+p_dis
+```
+
+
+
 ```{r}
 #| include: false
 

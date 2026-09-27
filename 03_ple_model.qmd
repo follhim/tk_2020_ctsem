@@ -34,6 +34,12 @@ source("cust_funcs/ct_tp_ppc.R")
 p3_data <- readRDS("data/p2_data.Rds")
 ```
 
+:::callout-important
+## Seungju's Notes
+
+Please see very bottom for sensitivity models. This was a very tricky model because the floor effect was so strong. Overall, the `censored` approach works best.
+:::
+
 ### Standardize Variables
 ```{r}
 p3_data <- p3_data %>%
@@ -45,6 +51,10 @@ p3_data %>%
 ```
 
 ## CENSOR-AUTO
+
+:::callout-note
+Due to the extremely large floor effect, we use a censored/tobit approach to address psychotic like experiences (`psx`).
+:::
 
 ### Model Specification
 ```{r}

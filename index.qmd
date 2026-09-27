@@ -4,8 +4,6 @@
 All code and data are processed locally on a personal computer. At no time is data stored on GitHub, even temporarily.
 :::
 
-This website documents the data preparation and analysis for XXXX.
-
 ## How to navigate this website?
 
 1.  To see the raw code files see [here.](https://github.com/follhim/tk_2020_ctsem)
@@ -16,3 +14,17 @@ This website documents the data preparation and analysis for XXXX.
 1.  This data cleaning and analysis is performed locally on a laptop.
 2.  Each phase is separated by its own R script file (`.qmd` file)
 3.  Thus, each R script *chapter* reflects the actual underlying code used to clean and analyze data. 
+
+
+## Changelog
+
+### 09.26.26
+
+-  Cleaned up code
+   -  Now code is hidden in tab, you just need to "click" to view.
+   -  Added more notes to explain model specification.
+-  Revised models to be synonymous to a RDSEM (i.e., we allowed for the overall detrend of variables).
+-  Added VAR models using Positive and Stressful Situations.
+-  Ran sensitivity models for `03_PLE`
+-  Added visual sensitivity for `PLX` composite score by MSS subscales.
+-  Added visuals for Positive and Stressful Situation items.
