@@ -280,7 +280,8 @@ dp_pa_trend <- ct_dpars_plot(pa_trend_fit,
   type     = "auto",   # auto-effects only (no cross-effects in this model)
   exclude  = c("pa_trend"),   # dynamic process(es) only
   times    = seq(0, 2, 0.02),
-  nsamples = 100)
+  nsamples = 100,
+  standardise = TRUE)
 saveRDS(dp_pa_trend, "02_files/dp_pa_trend.rds")
 beepr::beep(8)
 ```
@@ -377,10 +378,10 @@ sit_trend_mod <- ctModel(
     0,            0,              "drift_pa_trend", 0,
     0,            0,              0,                "drift_psit_trend"),
     4, 4, byrow = TRUE),
-  # DIFFUSION -- system noise on the dynamic processes only (trends are smooth)
+  # DIFFUSION -- system noise on the dynamic processes only (trends are smooth) (correlation fixed to 0)
   DIFFUSION = matrix(c(
     "diff_pa",      0,           0, 0,
-    "diff_pa_psit", "diff_psit", 0, 0,
+    0, "diff_psit", 0, 0,
     0,              0,           0, 0,
     0,              0,           0, 0), 4, 4, byrow = TRUE),
   # T0VAR -- initial within-person deviations; trend starting points are
@@ -395,9 +396,8 @@ sit_trend_mod <- ctModel(
   T0MEANS = c(0, 0, "T0m_pa_trend", "T0m_psit_trend"),
   CINT    = c(0, 0, "cint_pa_trend", "cint_psit_trend"),
   MANIFESTMEANS = 0,
-  # MANIFESTVAR: measurement error incl. its covariance (same-beep response
-  # style / shared occasion error). Without it the shock correlation goes to
-  # ~.99 and the cross-effects compensate.
+  # MANIFESTVAR: occasion-specific error variances + covariance
+  # (same-moment association is carried here; DIFFUSION correlation fixed to 0)
   MANIFESTVAR = matrix(c(
     "mvar_pa",      0,
     "mvar_pa_psit", "mvar_psit"), 2, 2, byrow = TRUE)
@@ -476,8 +476,9 @@ ct_sig_table(sit_trend_fit)
 set.seed(1111)
 dp_sit_trend <- ct_dpars_plot(sit_trend_fit,
   exclude  = c("pa_trend", "psit_trend"),   # dynamic processes only
-  times    = seq(0, 8, 0.02),
-  nsamples = 100)
+  times    = seq(0, 3, 0.001),
+  nsamples = 100,
+  standardise = T)
 saveRDS(dp_sit_trend, "02_files/dp_sit_trend.rds")
 beepr::beep(8)
 ```
@@ -528,10 +529,10 @@ mod_sit_trend <- ct_mod_grid(
   sit_trend_fit,
   latentNames = c("pa", "psit", "pa_trend", "psit_trend"),
   effects     = c("pa", "psit>pa", "pa>psit", "psit"),
-  tipreds     = c("zpos", "zneg", "zdis"),
-  labels      = c(zpos = "Positive Schizotypy", zneg = "Negative Schizotypy",
+  tipreds     = c("zpos", "zdis"),
+  labels      = c(zpos = "Positive Schizotypy",
                   zdis = "Disorganized Schizotypy"),
-  times       = seq(0, 2, 0.04),
+  times       = seq(0, 3, 0.01),
   nsamp_use   = 100,
   x_lab       = "Time (days)"
 )
@@ -544,7 +545,14 @@ beepr::beep(8)
 #| fig-width: 12
 #| fig-height: 8
 mod_sit_trend <- readRDS("02_files/mod_sit_trend.rds")
-patchwork::wrap_plots(lapply(mod_sit_trend$zpos, `[[`, "plot"), ncol = 2, guides = "collect")
+mod_sit_trend$zpos$`psit (auto`
+```
+
+##### ZDIS
+```{r}
+#| fig-width: 12
+#| fig-height: 8
+mod_sit_trend$zdis$`psit -> pa`
 ```
 
 ## Stressful Situation (esm25)
@@ -574,10 +582,10 @@ str_trend_mod <- ctModel(
     0,            0,              "drift_pa_trend", 0,
     0,            0,              0,                "drift_ssit_trend"),
     4, 4, byrow = TRUE),
-  # DIFFUSION -- system noise on the dynamic processes only (trends are smooth)
+  # DIFFUSION -- system noise on the dynamic processes only (trends are smooth) (correlation fixed to 0)
   DIFFUSION = matrix(c(
     "diff_pa",      0,           0, 0,
-    "diff_pa_ssit", "diff_ssit", 0, 0,
+    0, "diff_ssit", 0, 0,
     0,              0,           0, 0,
     0,              0,           0, 0), 4, 4, byrow = TRUE),
   # T0VAR -- initial within-person deviations; trend starting points are
@@ -592,9 +600,8 @@ str_trend_mod <- ctModel(
   T0MEANS = c(0, 0, "T0m_pa_trend", "T0m_ssit_trend"),
   CINT    = c(0, 0, "cint_pa_trend", "cint_ssit_trend"),
   MANIFESTMEANS = 0,
-  # MANIFESTVAR: measurement error incl. its covariance (same-beep response
-  # style / shared occasion error). Without it the shock correlation goes to
-  # ~.99 and the cross-effects compensate.
+  # MANIFESTVAR: occasion-specific error variances + covariance
+  # (same-moment association is carried here; DIFFUSION correlation fixed to 0)
   MANIFESTVAR = matrix(c(
     "mvar_pa",      0,
     "mvar_pa_ssit", "mvar_ssit"), 2, 2, byrow = TRUE)
@@ -667,8 +674,9 @@ ct_sig_table(str_trend_fit)
 set.seed(1111)
 dp_str_trend <- ct_dpars_plot(str_trend_fit,
   exclude  = c("pa_trend", "ssit_trend"),   # dynamic processes only
-  times    = seq(0, 2, 0.02),
-  nsamples = 100)
+  times    = seq(0, 2, 0.001),
+  nsamples = 100,
+  standardise = TRUE)
 saveRDS(dp_str_trend, "02_files/dp_str_trend.rds")
 beepr::beep(8)
 ```
@@ -698,11 +706,11 @@ summary(str_trend_fit)$tipreds %>%
 set.seed(1111)
 mod_str_trend <- ct_mod_grid(
   str_trend_fit,
-  latentNames = c("ssit"),
-  effects     = c("ssit"),
+  latentNames = c("ssit", "pa"),
+  effects     = c("ssit", "pa"),
   tipreds     = c("zdis"),
   labels      = c(zdis = "Disorganized Schizotypy"),
-  times       = seq(0, 2, 0.01),
+  times       = seq(0, 2, 0.001),
   nsamp_use   = 100,
   x_lab       = "Time (days)"
 )

@@ -158,7 +158,8 @@ dp_neg3_cens_trend <- ct_dpars_plot(neg3_cens_trend_fit,
   type     = "auto",   # auto-effects only (no cross-effects in this model)
   exclude  = c("neg3_trend"),   # dynamic process(es) only
   times    = seq(0, 8, 0.01),
-  nsamples = 100)
+  nsamples = 100,
+  standardise = TRUE)
 saveRDS(dp_neg3_cens_trend, "06_files/dp_neg3_cens_trend.rds")
 beepr::beep(8)
 ```
@@ -241,10 +242,10 @@ neg3_sit_trend_mod <- ctModel(
     0                 , 0                 , "drift_neg3_trend", 0                 ,
     0                 , 0                 , 0                 , "drift_psit_trend"),
     4, 4, byrow = TRUE),
-  # DIFFUSION -- system noise on the dynamic processes only
+  # DIFFUSION -- system noise on the dynamic processes only (correlation fixed to 0)
   DIFFUSION = matrix(c(
     "diff_neg3"     , 0               , 0               , 0               ,
-    "diff_neg3_psit", "diff_psit"     , 0               , 0               ,
+    0, "diff_psit"     , 0               , 0               ,
     0               , 0               , 0               , 0               ,
     0               , 0               , 0               , 0),
     4, 4, byrow = TRUE),
@@ -258,9 +259,11 @@ neg3_sit_trend_mod <- ctModel(
   T0MEANS = c(0, 0, "T0m_neg3_trend", "T0m_psit_trend"),
   CINT    = c(0, 0, "cint_neg3_trend", "cint_psit_trend"),
   MANIFESTMEANS = 0,
+  # MANIFESTVAR: occasion-specific error variances + covariance
+  # (same-moment association is carried here; DIFFUSION correlation fixed to 0)
   MANIFESTVAR = matrix(c(
-    "mvar_neg3", 0,
-    0,          "mvar_psit"), 2, 2, byrow = TRUE)
+    "mvar_neg3",      0,
+    "mvar_neg3_psit", "mvar_psit"), 2, 2, byrow = TRUE)
 )
 
 # Random effects = the trend factors' T0MEANS and CINT only (EAS default)
@@ -328,8 +331,9 @@ ct_sig_table(neg3_sit_trend_fit)
 set.seed(1111)
 dp_neg3_sit_trend <- ct_dpars_plot(neg3_sit_trend_fit,
   exclude  = c("neg3_trend", "psit_trend"),   # dynamic processes only
-  times    = seq(0, 5, 0.01),
-  nsamples = 100)
+  times    = seq(0, 2, 0.001),
+  nsamples = 100,
+  standardise = TRUE)
 saveRDS(dp_neg3_sit_trend, "06_files/dp_neg3_sit_trend.rds")
 beepr::beep(8)
 ```
@@ -354,47 +358,81 @@ summary(neg3_sit_trend_fit)$tipreds %>%
 ```
 
 #### Moderation Plots
-```{r}
-#| eval: false
-set.seed(1111)
-mod_neg3_sit_trend <- ct_mod_grid(
-  neg3_sit_trend_fit,
-  latentNames = c("neg3", "psit", "neg3_trend", "psit_trend"),
-  effects     = c("neg3", "psit>neg3", "psit"),
-  tipreds     = c("zpos", "zneg", "zdis"),
-  labels      = c(zpos = "Positive Schizotypy", zneg = "Negative Schizotypy",
-                  zdis = "Disorganized Schizotypy"),
-  times       = seq(0, 5, 0.01),
-  nsamp_use   = 100,
-  x_lab       = "Time (days)"
-)
-saveRDS(mod_neg3_sit_trend, "06_files/mod_neg3_sit_trend.rds")
-beepr::beep(8)
-```
 
 ##### ZPOS
 ```{r}
+#| eval: false
+set.seed(1111)
+mod_neg3_sit_trend_zpos <- ct_mod_grid(
+  neg3_sit_trend_fit,
+  latentNames = c("neg3", "psit", "neg3_trend", "psit_trend"),
+  effects     = c("neg3>psit", "psit"),
+  tipreds     = c("zpos"),
+  labels      = c(zpos = "Positive Schizotypy"),
+  times       = seq(0, 2, 0.001),
+  nsamp_use   = 100,
+  x_lab       = "Time (days)"
+)
+saveRDS(mod_neg3_sit_trend_zpos, "06_files/mod_neg3_sit_trend_zpos.rds")
+beepr::beep(8)
+```
+
+```{r}
 #| fig-width: 12
 #| fig-height: 8
-mod_neg3_sit_trend <- readRDS("06_files/mod_neg3_sit_trend.rds")
-mod_neg3_sit_trend$zpos$`neg3 (auto`$plot
+mod_neg3_sit_trend_zpos <- readRDS("06_files/mod_neg3_sit_trend_zpos.rds")
+mod_neg3_sit_trend_zpos$zpos$`neg3 -> psit`$plot
+mod_neg3_sit_trend_zpos$zpos$`psit (auto`$plot
 ```
 
 ##### ZNEG
 ```{r}
+#| eval: false
+set.seed(1111)
+mod_neg3_sit_trend_zneg <- ct_mod_grid(
+  neg3_sit_trend_fit,
+  latentNames = c("neg3", "psit", "neg3_trend", "psit_trend"),
+  effects     = c("psit>neg3"),
+  tipreds     = c("zneg"),
+  labels      = c(zneg = "Negative Schizotypy"),
+  times       = seq(0, 2, 0.001),
+  nsamp_use   = 100,
+  x_lab       = "Time (days)"
+)
+saveRDS(mod_neg3_sit_trend_zneg, "06_files/mod_neg3_sit_trend_zneg.rds")
+beepr::beep(8)
+```
+
+```{r}
 #| fig-width: 12
 #| fig-height: 8
-mod_neg3_sit_trend <- readRDS("06_files/mod_neg3_sit_trend.rds")
-mod_neg3_sit_trend$zneg$`neg3 (auto`$plot
+mod_neg3_sit_trend_zneg <- readRDS("06_files/mod_neg3_sit_trend_zneg.rds")
+mod_neg3_sit_trend_zneg$zneg$`psit -> neg3`$plot
 ```
 
 ##### ZDIS
 ```{r}
+#| eval: false
+set.seed(1111)
+mod_neg3_sit_trend_zdis <- ct_mod_grid(
+  neg3_sit_trend_fit,
+  latentNames = c("neg3", "psit", "neg3_trend", "psit_trend"),
+  effects     = c("neg3>psit"),
+  tipreds     = c("zdis"),
+  labels      = c(zdis = "Disorganized Schizotypy"),
+  times       = seq(0, 2, 0.001),
+  nsamp_use   = 100,
+  x_lab       = "Time (days)"
+)
+saveRDS(mod_neg3_sit_trend_zdis, "06_files/mod_neg3_sit_trend_zdis.rds")
+beepr::beep(8)
+```
+
+```{r}
 #| fig-width: 12
 #| fig-height: 8
-mod_neg3_sit_trend <- readRDS("06_files/mod_neg3_sit_trend.rds")
-mod_neg3_sit_trend$zdis$`psit -> neg3`$plot
-mod_neg3_sit_trend$zdis$`psit (auto`$plot
+mod_neg3_sit_trend_zdis <- readRDS("06_files/mod_neg3_sit_trend_zdis.rds")
+mod_neg3_sit_trend_zdis$zdis$`neg3 -> psit`$plot
 ```
 
 ## CENSOR-SSIT
@@ -426,10 +464,10 @@ neg3_str_trend_mod <- ctModel(
     0                 , 0                 , "drift_neg3_trend", 0                 ,
     0                 , 0                 , 0                 , "drift_ssit_trend"),
     4, 4, byrow = TRUE),
-  # DIFFUSION -- system noise on the dynamic processes only
+  # DIFFUSION -- system noise on the dynamic processes only (correlation fixed to 0)
   DIFFUSION = matrix(c(
     "diff_neg3"     , 0               , 0               , 0               ,
-    "diff_neg3_ssit", "diff_ssit"     , 0               , 0               ,
+    0, "diff_ssit"     , 0               , 0               ,
     0               , 0               , 0               , 0               ,
     0               , 0               , 0               , 0),
     4, 4, byrow = TRUE),
@@ -443,9 +481,11 @@ neg3_str_trend_mod <- ctModel(
   T0MEANS = c(0, 0, "T0m_neg3_trend", "T0m_ssit_trend"),
   CINT    = c(0, 0, "cint_neg3_trend", "cint_ssit_trend"),
   MANIFESTMEANS = 0,
+  # MANIFESTVAR: occasion-specific error variances + covariance
+  # (same-moment association is carried here; DIFFUSION correlation fixed to 0)
   MANIFESTVAR = matrix(c(
-    "mvar_neg3", 0,
-    0,          "mvar_ssit"), 2, 2, byrow = TRUE)
+    "mvar_neg3",      0,
+    "mvar_neg3_ssit", "mvar_ssit"), 2, 2, byrow = TRUE)
 )
 
 # Random effects = the trend factors' T0MEANS and CINT only (EAS default)
@@ -513,8 +553,9 @@ ct_sig_table(neg3_str_trend_fit)
 set.seed(1111)
 dp_neg3_str_trend <- ct_dpars_plot(neg3_str_trend_fit,
   exclude  = c("neg3_trend", "ssit_trend"),   # dynamic processes only
-  times    = seq(0, 8, 0.01),
-  nsamples = 100)
+  times    = seq(0, 4, 0.01),
+  nsamples = 100,
+  standardise = TRUE)
 saveRDS(dp_neg3_str_trend, "06_files/dp_neg3_str_trend.rds")
 beepr::beep(8)
 ```
@@ -548,7 +589,7 @@ mod_neg3_str_trend <- ct_mod_grid(
   effects     = c("ssit"),
   tipreds     = c("zdis"),
   labels      = c(zdis = "Disorganized Schizotypy"),
-  times       = seq(0, 8, 0.01),
+  times       = seq(0, 4, 0.01),
   nsamp_use   = 100,
   x_lab       = "Time (days)"
 )
@@ -561,5 +602,5 @@ beepr::beep(8)
 #| fig-width: 12
 #| fig-height: 8
 mod_neg3_str_trend <- readRDS("06_files/mod_neg3_str_trend.rds")
-patchwork::wrap_plots(lapply(mod_neg3_str_trend$zdis, `[[`, "plot"), ncol = 2, guides = "collect")
+mod_neg3_str_trend$zdis$`ssit (auto`$plot
 ```

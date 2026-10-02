@@ -170,7 +170,8 @@ dp_psx_cens_trend <- ct_dpars_plot(psx_cens_trend_fit,
   type     = "auto",   # auto-effects only (no cross-effects in this model)
   exclude  = c("psx_trend"),   # dynamic process(es) only
   times    = seq(0, 2, 0.02),
-  nsamples = 100)
+  nsamples = 100,
+  standardise = TRUE)
 saveRDS(dp_psx_cens_trend, "03_files/dp_psx_cens_trend.rds")
 beepr::beep(8)
 ```
@@ -260,10 +261,10 @@ psx_sit_trend_mod <- ctModel(
     0                 , 0                 , "drift_psx_trend" , 0                 ,
     0                 , 0                 , 0                 , "drift_psit_trend"),
     4, 4, byrow = TRUE),
-  # DIFFUSION -- system noise on the dynamic processes only
+  # DIFFUSION -- system noise on the dynamic processes only (correlation fixed to 0)
   DIFFUSION = matrix(c(
     "diff_psx"     , 0              , 0              , 0              ,
-    "diff_psx_psit", "diff_psit"    , 0              , 0              ,
+    0, "diff_psit"    , 0              , 0              ,
     0              , 0              , 0              , 0              ,
     0              , 0              , 0              , 0),
     4, 4, byrow = TRUE),
@@ -277,9 +278,11 @@ psx_sit_trend_mod <- ctModel(
   T0MEANS = c(0, 0, "T0m_psx_trend", "T0m_psit_trend"),
   CINT    = c(0, 0, "cint_psx_trend", "cint_psit_trend"),
   MANIFESTMEANS = 0,
+  # MANIFESTVAR: occasion-specific error variances + covariance
+  # (same-moment association is carried here; DIFFUSION correlation fixed to 0)
   MANIFESTVAR = matrix(c(
-    "mvar_psx", 0,
-    0,          "mvar_psit"), 2, 2, byrow = TRUE)
+    "mvar_psx",      0,
+    "mvar_psx_psit", "mvar_psit"), 2, 2, byrow = TRUE)
 )
 
 # Random effects = the trend factors' T0MEANS and CINT only (EAS default)
@@ -313,10 +316,6 @@ saveRDS(psx_sit_trend_fit, "03_files/psx_sit_trend_fit.Rds")
 beepr::beep(8)
 ```
 
-```{r}
-psx_sit_trend_fit <- readRDS("03_files/psx_sit_trend_fit.Rds")
-```
-
 ### Posterior Predictive Check
 ```{r}
 #| eval: false
@@ -338,6 +337,7 @@ pp_psx_sit_trend$SubjectLogLik
 
 ### Results Table
 ```{r}
+psx_sit_trend_fit <- readRDS("03_files/psx_sit_trend_fit.rds")
 ct_sig_table(psx_sit_trend_fit)
 ```
 
@@ -347,7 +347,8 @@ ct_sig_table(psx_sit_trend_fit)
 set.seed(1111)
 dp_psx_sit_trend <- ct_dpars_plot(psx_sit_trend_fit,
   exclude  = c("psx_trend", "psit_trend"),   # dynamic processes only
-  times    = seq(0, 2, 0.02),
+  times    = seq(0, 3, 0.001),
+  standardise = T,
   nsamples = 100)
 saveRDS(dp_psx_sit_trend, "03_files/dp_psx_sit_trend.rds")
 beepr::beep(8)
@@ -378,12 +379,12 @@ summary(psx_sit_trend_fit)$tipreds %>%
 set.seed(1111)
 mod_psx_sit_trend <- ct_mod_grid(
   psx_sit_trend_fit,
-  latentNames = c("psx", "psit", "psx_trend", "psit_trend"),
-  effects     = c("psx", "psit>psx", "psx>psit", "psit"),
+  latentNames = c("psit"),
+  effects     = c("psit"),
   tipreds     = c("zpos", "zneg", "zdis"),
-  labels      = c(zpos = "Positive Schizotypy", zneg = "Negative Schizotypy",
+  labels      = c(zpos = "Positive Schizotypy", 
                   zdis = "Disorganized Schizotypy"),
-  times       = seq(0, 2, 0.04),
+  times       = seq(0, 3, 0.001),
   nsamp_use   = 100,
   x_lab       = "Time (days)"
 )
@@ -396,21 +397,14 @@ beepr::beep(8)
 #| fig-width: 12
 #| fig-height: 8
 mod_psx_sit_trend <- readRDS("03_files/mod_psx_sit_trend.rds")
-patchwork::wrap_plots(lapply(mod_psx_sit_trend$zpos, `[[`, "plot"), ncol = 2, guides = "collect")
-```
-
-##### ZNEG
-```{r}
-#| fig-width: 12
-#| fig-height: 8
-patchwork::wrap_plots(lapply(mod_psx_sit_trend$zneg, `[[`, "plot"), ncol = 2, guides = "collect")
+mod_psx_sit_trend$zpos
 ```
 
 ##### ZDIS
 ```{r}
 #| fig-width: 12
 #| fig-height: 8
-patchwork::wrap_plots(lapply(mod_psx_sit_trend$zdis, `[[`, "plot"), ncol = 2, guides = "collect")
+mod_psx_sit_trend$zdis
 ```
 
 ## CENSOR-SSIT
@@ -442,10 +436,10 @@ psx_str_trend_mod <- ctModel(
     0                 , 0                 , "drift_psx_trend" , 0                 ,
     0                 , 0                 , 0                 , "drift_ssit_trend"),
     4, 4, byrow = TRUE),
-  # DIFFUSION -- system noise on the dynamic processes only
+  # DIFFUSION -- system noise on the dynamic processes only (correlation fixed to 0)
   DIFFUSION = matrix(c(
     "diff_psx"     , 0              , 0              , 0              ,
-    "diff_psx_ssit", "diff_ssit"    , 0              , 0              ,
+    0, "diff_ssit"    , 0              , 0              ,
     0              , 0              , 0              , 0              ,
     0              , 0              , 0              , 0),
     4, 4, byrow = TRUE),
@@ -459,9 +453,11 @@ psx_str_trend_mod <- ctModel(
   T0MEANS = c(0, 0, "T0m_psx_trend", "T0m_ssit_trend"),
   CINT    = c(0, 0, "cint_psx_trend", "cint_ssit_trend"),
   MANIFESTMEANS = 0,
+  # MANIFESTVAR: occasion-specific error variances + covariance
+  # (same-moment association is carried here; DIFFUSION correlation fixed to 0)
   MANIFESTVAR = matrix(c(
-    "mvar_psx", 0,
-    0,          "mvar_ssit"), 2, 2, byrow = TRUE)
+    "mvar_psx",      0,
+    "mvar_psx_ssit", "mvar_ssit"), 2, 2, byrow = TRUE)
 )
 
 # Random effects = the trend factors' T0MEANS and CINT only (EAS default)
@@ -529,8 +525,9 @@ ct_sig_table(psx_str_trend_fit)
 set.seed(1111)
 dp_psx_str_trend <- ct_dpars_plot(psx_str_trend_fit,
   exclude  = c("psx_trend", "ssit_trend"),   # dynamic processes only
-  times    = seq(0, 2, 0.02),
-  nsamples = 100)
+  times    = seq(0, 3, 0.01),
+  nsamples = 100,
+  standardise = TRUE)
 saveRDS(dp_psx_str_trend, "03_files/dp_psx_str_trend.rds")
 beepr::beep(8)
 ```
@@ -560,11 +557,11 @@ summary(psx_str_trend_fit)$tipreds %>%
 set.seed(1111)
 mod_psx_str_trend_neg <- ct_mod_grid(
   psx_str_trend_fit,
-  latentNames = c("psx", "ssit"),
-  effects     = c("psx", "ssit>psx", "psx>ssit", "ssit"),
-  tipreds     = c("zneg"),
-  labels      = c(zneg = "Negative Schizotypy"),
-  times       = seq(0, 5, 0.01),
+  latentNames = c("ssit"),
+  effects     = c("ssit"),
+  tipreds     = c("zdis"),
+  labels      = c(zdis = "Disorganized Schizotypy"),
+  times       = seq(0, 3, 0.01),
   nsamp_use   = 100,
   x_lab       = "Time (days)"
 )
@@ -572,36 +569,12 @@ saveRDS(mod_psx_str_trend_neg, "03_files/mod_psx_str_trend_neg.rds")
 beepr::beep(8)
 ```
 
-##### ZNEG
+##### ZDIS
 ```{r}
 #| fig-width: 12
 #| fig-height: 8
 mod_psx_str_trend_neg <- readRDS("03_files/mod_psx_str_trend_neg.rds")
-patchwork::wrap_plots(lapply(mod_psx_str_trend_neg$zneg, `[[`, "plot"), ncol = 2, guides = "collect")
-```
-
-##### ZDIS
-```{r}
-#| eval: false
-set.seed(1111)
-mod_psx_str_trend_dis <- ct_mod_grid(
-  psx_str_trend_fit,
-  latentNames = c("psx", "ssit"),
-  effects     = c("psx", "psx>ssit"),
-  tipreds     = c("zdis"),
-  labels      = c(zdis = "Disorganized Schizotypy"),
-  times       = seq(0, 5, 0.01),
-  nsamp_use   = 100,
-  x_lab       = "Time (days)"
-)
-saveRDS(mod_psx_str_trend_dis, "03_files/mod_psx_str_trend_dis.rds")
-beepr::beep(8)
-```
-```{r}
-#| fig-width: 12
-#| fig-height: 8
-mod_psx_str_trend_dis <- readRDS("03_files/mod_psx_str_trend_dis.rds")
-patchwork::wrap_plots(lapply(mod_psx_str_trend_dis$zdis, `[[`, "plot"), ncol = 2, guides = "collect")
+mod_psx_str_trend_neg$zdis
 ```
 
 ## Sensitivity Checks
