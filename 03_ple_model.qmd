@@ -397,14 +397,14 @@ beepr::beep(8)
 #| fig-width: 12
 #| fig-height: 8
 mod_psx_sit_trend <- readRDS("03_files/mod_psx_sit_trend.rds")
-mod_psx_sit_trend$zpos
+mod_psx_sit_trend$zpos$`psit (auto`$plot
 ```
 
 ##### ZDIS
 ```{r}
 #| fig-width: 12
 #| fig-height: 8
-mod_psx_sit_trend$zdis
+mod_psx_sit_trend$zdis$`psit (auto`$plot
 ```
 
 ## CENSOR-SSIT
@@ -574,7 +574,7 @@ beepr::beep(8)
 #| fig-width: 12
 #| fig-height: 8
 mod_psx_str_trend_neg <- readRDS("03_files/mod_psx_str_trend_neg.rds")
-mod_psx_str_trend_neg$zdis
+mod_psx_str_trend_neg$zdis$`ssit (auto`$plot
 ```
 
 ## Sensitivity Checks
