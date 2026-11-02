@@ -532,7 +532,7 @@ set.seed(1111)
 mod_dis_str_trend <- ct_mod_grid(
   dis_str_trend_fit,
   latentNames = c("dis", "ssit"),
-  effects     = c("dis", "dis>ssit"),
+  effects     = c("dis", "dis>ssit", "ssit", "ssit>dis"),
   tipreds     = c("zdis"),
   labels      = c(zdis = "Disorganized Schizotypy"),
   times       = seq(0, 1, 0.001),
