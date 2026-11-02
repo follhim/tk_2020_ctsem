@@ -220,26 +220,4 @@ mod_psx_str_trend_neg <- readRDS("03_files/mod_psx_str_trend_neg.rds")
 mod_psx_str_trend_neg$zdis$`ssit (auto`$plot
 ```
 
-## HMC
-
-### Fit Model
-```{r}
-#| eval: false
-ctJuliaSetup(threads = 10, force = TRUE)   # fresh engine (cached per model shape)
-psx_str_trend_fit_hmc <- ctFit(
-  datalong = psx_str_trend_data,
-  model    = psx_str_trend_mod,
-  backend = "julia", optimize = FALSE, intoverpop = "augmented",
-  sampleControl = list(chains = 4, warmup = 500, draws = 1000, minESS = 200),
-  cores = 10, plot = FALSE, priors = TRUE, verbose = 1
-)
-saveRDS(psx_str_trend_fit_hmc, "05_files/psx_str_trend_fit_hmc.Rds")
-beepr::beep(8)
-```
-
-```{r}
-ctDiscretePars(psx_str_trend_fit_hmc,
-               times = seq(0, 3, 0.01),
-               plot =T)
-```
 
